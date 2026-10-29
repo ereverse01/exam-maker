@@ -287,20 +287,38 @@
   }
 
   // 꼬리말: 홀수쪽 '뒷면에 계속', 짝수쪽 '다음 장에 계속', 마지막 쪽은 없음
-  function contPara(txt) {
-    return '<hp:p id="' + PID + '" paraPrIDRef="74" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="8"><hp:t>' + ICON + '</hp:t></hp:run><hp:run charPrIDRef="6"><hp:t>' + txt + '</hp:t></hp:run></hp:p>';
+  // 꼬리말 영역은 '계속' 한 줄(CONT_L)만 쓰고 쪽 테두리 안에 포함시킴(footerInside).
+  // 쪽 번호·저작권 문구는 테두리 아래 원래 자리에 글상자처럼 띄운 표로 넣음.
+  const FOOT_ORIG = 2834, BOTTOM_ORIG = 1417, PAPER_H = 84188;
+  const PN_TOP = CONT_L - 460; // 꼬리말 영역 위쪽 기준 → 원래 테두리 바로 아래
+  function pageNumTable(innerParas) {
+    const w = 53860, h = FOOT_ORIG - 120;
+    return '<hp:tbl id="' + (1400000000 + (tblSeq++)) + '" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="NONE" repeatHeader="0" rowCnt="1" colCnt="1" cellSpacing="0" borderFillIDRef="1" noAdjust="0">' +
+      '<hp:sz width="' + w + '" widthRelTo="ABSOLUTE" height="' + h + '" heightRelTo="ABSOLUTE" protect="0"/>' +
+      '<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="1" holdAnchorAndSO="0" vertRelTo="PAPER" horzRelTo="PAPER" vertAlign="TOP" horzAlign="CENTER" vertOffset="' + PN_TOP + '" horzOffset="0"/>' +
+      '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="0" right="0" top="0" bottom="0"/>' +
+      '<hp:tr><hp:tc name="" header="0" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="1">' +
+      '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="BOTTOM" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">' +
+      innerParas + '</hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/>' +
+      '<hp:cellSz width="' + w + '" height="' + h + '"/><hp:cellMargin left="0" right="0" top="0" bottom="0"/></hp:tc></hp:tr></hp:tbl>';
   }
   function setupFooters(p0) {
     const re = /<hp:footer id="\d+" applyPageType="\w+">([\s\S]*?)<\/hp:footer>/g;
     const footers = p0.match(re); if (!footers || footers.length < 1) throw new Error('꼬리말을 찾을 수 없음');
-    const plain = footers[footers.length - 1].replace(/textHeight="\d+"/, 'textHeight="' + (2834 + CONT_L) + '"');
-    const make = (id, type, cont) => plain.replace(/<hp:footer id="\d+" applyPageType="\w+">/, '<hp:footer id="' + id + '" applyPageType="' + type + '">')
-      .replace(/(<hp:subList [^>]*>)/, '$1' + (cont ? contPara(cont) : ''));
+    const plain = footers[footers.length - 1];
+    const subOpen = plain.match(/<hp:subList [^>]*>/)[0].replace(/textHeight="\d+"/, 'textHeight="' + CONT_L + '"');
+    const pnParas = plain.slice(plain.indexOf(subOpen.slice(0, 20)) >= 0 ? plain.indexOf('>', plain.indexOf('<hp:subList ')) + 1 : 0, plain.lastIndexOf('</hp:subList>'));
+    const make = (id, type, cont) => '<hp:footer id="' + id + '" applyPageType="' + type + '">' + subOpen +
+      '<hp:p id="' + PID + '" paraPrIDRef="74" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="8">' + pageNumTable(pnParas) +
+      (cont ? '<hp:t>' + ICON + '</hp:t></hp:run><hp:run charPrIDRef="6"><hp:t>' + cont + '</hp:t></hp:run>' : '<hp:t/></hp:run>') +
+      '</hp:p></hp:subList></hp:footer>';
     let i = 0;
     p0 = p0.replace(re, () => { i++; return i === 1 ? make(2, 'ODD', '뒷면에 계속☟') : make(1, 'EVEN', '다음 장에 계속☞'); });
     if (i === 1) throw new Error('꼬리말이 하나뿐임');
-    // 테두리는 본문 여백 안에서 끝나고, '계속' 줄은 테두리 바로 아래(쪽 번호 위)에 옴
-    p0 = p0.replace(/footer="2834"/, 'footer="' + (2834 + CONT_L) + '"');
+    // 꼬리말 높이를 줄인 만큼 아래 여백을 늘려 테두리 아래 끝은 원본과 같은 자리
+    p0 = p0.replace(/footer="2834"/, 'footer="' + CONT_L + '"')
+      .replace(/bottom="1417"\/><\/hp:pagePr>/, 'bottom="' + (BOTTOM_ORIG + FOOT_ORIG) + '"/></hp:pagePr>')
+      .replace(/(<hp:pageBorderFill type="BOTH"[^>]*?)footerInside="0"/, '$1footerInside="1"');
     return { p0, lastFooter: make(3, 'BOTH', '') };
   }
 

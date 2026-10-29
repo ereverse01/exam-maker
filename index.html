@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시험지 편집기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="template.js"></script>
+<script src="hwpx.js"></script>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#fff; --ink:#1d2330; --sub:#5d6575; --line:#dde1e8; --accent:#2f5bd3; --accent-soft:#e8eefc;
+    --warn:#b45309; --warn-soft:#fff4e0; --ok:#15803d;
+    --t-group:#7c3aed; --t-q:#2f5bd3; --t-choice:#0f766e; --t-passage:#9aa1ad; --t-box:#b45309; --t-dialog:#be185d; --t-mark:#c2410c;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14161b; --card:#1d2027; --ink:#e7e9ee; --sub:#a0a7b4; --line:#323743; --accent:#7ea2ff; --accent-soft:#232c45;
+      --warn:#f0b463; --warn-soft:#3a2c14; --ok:#5ad08a;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14161b; --card:#1d2027; --ink:#e7e9ee; --sub:#a0a7b4; --line:#323743; --accent:#7ea2ff; --accent-soft:#232c45;
+    --warn:#f0b463; --warn-soft:#3a2c14; --ok:#5ad08a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 "Malgun Gothic","맑은 고딕",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:18px;margin:0;font-weight:700}
+  header .sp{flex:1}
+  .btn{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:7px 12px;font:inherit;font-size:14px;cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700;padding:9px 16px}
+  .btn.primary:disabled{opacity:.6;cursor:wait}
+  main{max-width:1180px;margin:0 auto;padding:18px 16px 60px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .card h2 small{font-weight:400;color:var(--sub);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 14px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--sub)}
+  label.f input,label.f select{font:inherit;font-size:15px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:7px 9px;width:100%}
+  label.f input:focus,label.f select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .summary{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:14px}
+  .summary b{color:var(--accent)}
+  .warn{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:6px 10px;font-size:13px}
+  .okmsg{color:var(--ok);font-size:13px}
+  .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+  .toolbar .sep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  .toolbar .btn{padding:5px 10px}
+  .ed-wrap{position:relative;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+  #editor{min-height:520px;padding:14px 16px 14px 88px;outline:none;white-space:pre-wrap;tab-size:6;
+    font-family:"함초롬바탕","HCR Batang","Batang","바탕",serif;font-size:15.5px;line-height:1.75;word-break:keep-all;overflow-wrap:anywhere}
+  #editor:focus{box-shadow:0 0 0 3px var(--accent-soft);border-radius:10px}
+  #editor > div{position:relative;padding-left:8px;border-left:3px solid transparent;min-height:1.75em}
+  #editor > div::before{content:attr(data-tag);position:absolute;left:-80px;width:68px;text-align:right;font:12px/1.75 "Malgun Gothic",sans-serif;color:var(--tc,var(--sub));top:0;user-select:none;pointer-events:none}
+  #editor > div[data-t="group"]{--tc:var(--t-group);border-left-color:var(--t-group)}
+  #editor > div[data-t="q"]{--tc:var(--t-q);border-left-color:var(--t-q)}
+  #editor > div[data-t="choice"]{--tc:var(--t-choice);border-left-color:var(--t-choice);padding-left:24px}
+  #editor > div[data-t="passage"]{--tc:var(--t-passage);border-left-color:var(--line)}
+  #editor > div[data-t="box"],#editor > div[data-t="bogi"]{--tc:var(--t-box);border-left-color:var(--t-box);background:color-mix(in srgb,var(--t-box) 7%,transparent)}
+  #editor > div[data-t="dialog"]{--tc:var(--t-dialog);border-left-color:var(--t-dialog)}
+  #editor > div[data-t="mark"]{--tc:var(--t-mark);color:var(--t-mark);font-family:"Malgun Gothic",sans-serif;font-size:13px;font-weight:700}
+  #editor:empty::after{content:"여기에 문제를 붙여넣거나 입력하세요";color:var(--sub)}
+  details.help{font-size:14px;color:var(--sub);margin-top:10px}
+  details.help summary{cursor:pointer;color:var(--ink);font-weight:600}
+  details.help table{border-collapse:collapse;margin-top:8px;width:100%;max-width:820px}
+  details.help td{border-top:1px solid var(--line);padding:6px 8px;vertical-align:top}
+  details.help td:first-child{white-space:nowrap;font-weight:600;color:var(--ink)}
+  code{background:var(--accent-soft);padding:1px 5px;border-radius:4px;font-size:13px}
+  .foot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:flex-end}
+  .foot .note{color:var(--sub);font-size:13px;margin-right:auto}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:10}
+  .toast.on{opacity:1}
+  @media (max-width:640px){
+    #editor{padding-left:16px}
+    #editor > div::before{position:static;display:block;width:auto;text-align:left;font-size:11px;line-height:1.3}
+    header{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📝 시험지 편집기</h1>
+  <span class="sp"></span>
+  <button class="btn" id="btnSample">예시 넣기</button>
+  <button class="btn" id="btnClear">새 시험지</button>
+  <button class="btn primary" id="btnMake">한글 파일 만들기</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>① 시험 정보 <small>머리 표·안내 상자·꼬리말에 들어갑니다</small></h2>
+    <div class="grid">
+      <label class="f">학년<select id="grade"><option>1</option><option>2</option><option>3</option></select></label>
+      <label class="f">학기<select id="sem"><option>1</option><option>2</option></select></label>
+      <label class="f">고사<select id="kind"><option>중간</option><option>기말</option></select></label>
+      <label class="f">시험일<input type="date" id="date"></label>
+      <label class="f">과목명<input id="subject" placeholder="공통영어1"></label>
+      <label class="f">과목 구분<input id="category" list="cats" placeholder="공통과목"></label>
+      <label class="f">과목코드<input id="code" placeholder="05"></label>
+      <label class="f">선택형 문항수 · 배점<span class="pair"><input id="nObj" type="number" min="0" placeholder="문항"><input id="ptsObj" type="number" min="0" step="0.1" placeholder="점"></span></label>
+      <label class="f">서답형 문항수 · 배점<span class="pair"><input id="nSub" type="number" min="0" placeholder="문항"><input id="ptsSub" type="number" min="0" step="0.1" placeholder="점"></span></label>
+      <label class="f">학교명 (꼬리말)<input id="school" placeholder="면목고등학교"></label>
+    </div>
+    <datalist id="cats"><option>공통과목</option><option>일반선택</option><option>진로선택</option><option>융합선택</option></datalist>
+    <div class="summary" id="summary"></div>
+  </section>
+
+  <section class="card">
+    <h2>② 문제 입력 <small>한글에서 복사해 붙여넣으면 굵게·밑줄이 그대로 들어옵니다</small></h2>
+    <div class="toolbar">
+      <button class="btn" data-cmd="bold" title="Ctrl+B"><b>굵게</b></button>
+      <button class="btn" data-cmd="underline" title="Ctrl+U"><u>밑줄</u></button>
+      <button class="btn" data-cmd="italic" title="Ctrl+I"><i>기울임</i></button>
+      <button class="btn" data-cmd="removeFormat">서식 지우기</button>
+      <span class="sep"></span>
+      <button class="btn" data-wrap="박스">▭ 박스</button>
+      <button class="btn" data-wrap="보기">▭ &lt;보기&gt;</button>
+      <button class="btn" data-wrap="대화">💬 대화문</button>
+    </div>
+    <div class="ed-wrap"><div id="editor" contenteditable="true" spellcheck="false"></div></div>
+    <details class="help">
+      <summary>입력 규칙 보기</summary>
+      <table>
+        <tr><td>묶음 지시문</td><td><code>[1-2] 다음 글을 읽고, 물음에 답하시오.</code> — 대괄호 번호로 시작하는 줄</td></tr>
+        <tr><td>발문</td><td><code>3. 다음 글의 제목으로 … [3.6점]</code> / <code>서답형 1. …</code> — 번호와 점으로 시작하는 줄 (번호는 자동으로 굵게)</td></tr>
+        <tr><td>선지</td><td><code>①</code>~<code>⑤</code>로 시작하는 줄. 한 줄에 여러 개는 <b>Tab</b> 키로 띄우세요</td></tr>
+        <tr><td>지문</td><td>나머지 모든 줄. 줄 하나 = 문단 하나</td></tr>
+        <tr><td>빈 줄</td><td>빈 줄 그대로 들어갑니다. 문항 앞에는 빈 줄이 없으면 하나 자동으로 넣습니다</td></tr>
+        <tr><td>박스</td><td><code>[박스]</code> 와 <code>[/박스]</code> 사이 줄 — 주어진 문장, 요약문 상자</td></tr>
+        <tr><td>&lt;보기&gt;</td><td><code>[보기]</code> 와 <code>[/보기]</code> 사이 줄 — 위에 &lt; 보 기 &gt; 제목이 붙은 상자</td></tr>
+        <tr><td>대화문</td><td><code>[대화]</code> 와 <code>[/대화]</code> 사이 줄 — <code>Host: 내용</code> 처럼 쓰면 이름이 굵게, 둘째 줄부터 들여쓰기</td></tr>
+        <tr><td>뒷면에 계속</td><td>홀수쪽에는 '뒷면에 계속', 짝수쪽에는 '다음 장에 계속'이 자동으로 붙고, 마지막 쪽에는 '- 끝 -'과 답안지 확인 상자가 들어갑니다</td></tr>
+      </table>
+    </details>
+  </section>
+
+  <div class="foot">
+    <span class="note">입력 내용은 이 기기 브라우저에 자동 저장됩니다.</span>
+    <button class="btn primary" id="btnMake2">한글 파일 만들기 (.hwpx)</button>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const ed = $('editor');
+  const KEY = 'examMaker.v1';
+  const FIELDS = ['grade','sem','kind','date','subject','category','code','nObj','ptsObj','nSub','ptsSub','school'];
+  const DEF = {grade:'1',sem:'1',kind:'중간',date:'',subject:'',category:'공통과목',code:'',nObj:'',ptsObj:'',nSub:'',ptsSub:'',school:'면목고등학교'};
+  try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+
+  // ---------- 저장 ----------
+  function load(){
+    let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(e){}
+    const m=Object.assign({},DEF,(s&&s.meta)||{});
+    FIELDS.forEach(k=>{ $(k).value=m[k]; });
+    ed.innerHTML=(s&&s.html)||'<div><br></div>';
+  }
+  let saveT=0;
+  function save(){
+    clearTimeout(saveT);
+    saveT=setTimeout(()=>{ try{ localStorage.setItem(KEY,JSON.stringify({meta:getMeta(),html:ed.innerHTML})); }catch(e){} },400);
+  }
+  function getMeta(){ const m={}; FIELDS.forEach(k=>m[k]=$(k).value.trim()); return m; }
+
+  // ---------- 편집기 → 줄 ----------
+  const escH = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  function wrap(t,f){ if(!t) return ''; let s=escH(t); if(f.i) s='<i>'+s+'</i>'; if(f.u) s='<u>'+s+'</u>'; if(f.b) s='<b>'+s+'</b>'; return s; }
+  const BLOCK=/^(DIV|P|LI|H[1-6]|TR|BLOCKQUOTE|TABLE|UL|OL|SECTION|ARTICLE|PRE)$/;
+  // root 안의 내용을 줄(간단한 HTML) 배열로. styleOf(el) → {b,u,i} 추가 서식
+  function toLines(root, styleOf){
+    const lines=[]; let cur=''; let has=false;
+    const flush=()=>{ lines.push(cur); cur=''; has=false; };
+    (function walk(node,f){
+      for(const n of node.childNodes){
+        if(n.nodeType===3){ const t=n.data.replace(/ /g,' ').replace(/​/g,''); if(t){ cur+=wrap(t,f); has=true; } continue; }
+        if(n.nodeType!==1) continue;
+        const nm=n.nodeName;
+        if(nm==='BR'){ if(!has && n===n.parentNode.lastChild && n.parentNode!==root){ lines.push(''); } else flush(); continue; }
+        if(nm==='STYLE'||nm==='SCRIPT'||nm==='HEAD'||nm==='TITLE'||nm==='META') continue;
+        const g=Object.assign({},f);
+        if(nm==='B'||nm==='STRONG') g.b=1; if(nm==='U') g.u=1; if(nm==='I'||nm==='EM') g.i=1;
+        if(styleOf){ const s=styleOf(n); if(s.b!=null) g.b=s.b; if(s.u) g.u=1; if(s.i!=null) g.i=s.i; }
+        const block=BLOCK.test(nm)||nm==='TD'||nm==='TH';
+        if(block && has) flush();
+        const before=lines.length;
+        walk(n,g);
+        if(block){ if(has) flush(); else if(lines.length===before && (nm==='DIV'||nm==='P')) lines.push(''); }
+      }
+    })(root,{});
+    if(has) flush();
+    return lines;
+  }
+  const editorLines = () => toLines(ed, el => { const st=el.style; const o={};
+    if(st.fontWeight){ o.b = (st.fontWeight==='bold'||+st.fontWeight>=600)?1:0; }
+    if(/underline/.test(st.textDecoration||'')) o.u=1;
+    if(st.fontStyle) o.i = st.fontStyle==='italic'?1:0;
+    return o; });
+
+  // ---------- 붙여넣기 (한글·워드·웹) ----------
+  function htmlToLines(html){
+    const fr=document.createElement('iframe');
+    fr.style.cssText='position:fixed;left:-9999px;top:0;width:800px;height:10px;visibility:hidden';
+    document.body.appendChild(fr);
+    const d=fr.contentDocument; d.open(); d.write(html); d.close();
+    const w=fr.contentWindow;
+    const lines=toLines(d.body, el=>{
+      const cs=w.getComputedStyle(el); const o={};
+      const fw=cs.fontWeight; o.b=(fw==='bold'||+fw>=600)?1:0;
+      if(/underline/.test(cs.textDecorationLine||cs.textDecoration||'')) o.u=1;
+      o.i=cs.fontStyle==='italic'?1:0;
+      return o;
+    });
+    fr.remove();
+    // 앞뒤 빈 줄 정리
+    while(lines.length && !lines[0].replace(/<[^>]+>/g,'').trim()) lines.shift();
+    while(lines.length && !lines[lines.length-1].replace(/<[^>]+>/g,'').trim()) lines.pop();
+    return lines;
+  }
+  const MARK='⁣⁣';
+  ed.addEventListener('paste', e=>{
+    e.preventDefault();
+    const cd=e.clipboardData; const html=cd.getData('text/html'); const text=cd.getData('text/plain');
+    let lines = html ? htmlToLines(html) : text.replace(/\r/g,'').split('\n').map(escH);
+    if(!lines.length) return;
+    lines[lines.length-1]+=MARK;
+    const one = lines.length===1;
+    document.execCommand('insertHTML', false, one ? lines[0] : lines.map(l=>'<div>'+(l||'<br>')+'</div>').join(''));
+    normalize(true);
+  });
+  // 편집기 내용을 <div>줄</div> 형태로 다시 정리
+  function normalize(caretAtMark){
+    const lines=editorLines();
+    ed.innerHTML=lines.map(l=>'<div>'+(l||'<br>')+'</div>').join('')||'<div><br></div>';
+    if(caretAtMark){
+      const w=document.createTreeWalker(ed,NodeFilter.SHOW_TEXT); let n;
+      while((n=w.nextNode())){ const k=n.data.indexOf(MARK); if(k>=0){
+        n.data=n.data.slice(0,k)+n.data.slice(k+MARK.length);
+        const r=document.createRange(); r.setStart(n,k); r.collapse(true);
+        const s=getSelection(); s.removeAllRanges(); s.addRange(r); break; } }
+    }
+    refresh();
+  }
+
+  // ---------- 줄 종류 표시 ----------
+  const TAG={group:'묶음',q:'발문',choice:'선지',passage:'지문',box:'박스',bogi:'보기',dialog:'대화',mark:''};
+  function tagLines(){
+    const divs=[...ed.children];
+    if(divs.some(d=>d.nodeName!=='DIV')) return;
+    const RE_OPEN=/^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/, RE_CLOSE=/^\s*[\[<]\s*\/\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
+    const KIND={박스:'box',상자:'box',보기:'bogi',대화:'dialog'};
+    let inside=null;
+    for(const d of divs){
+      const t=d.textContent.replace(/ /g,' ');
+      let ty;
+      const mo=t.match(RE_OPEN);
+      if(mo){ inside=KIND[mo[1]]; ty='mark'; }
+      else if(RE_CLOSE.test(t)){ inside=null; ty='mark'; }
+      else if(inside) ty=t.trim()?inside:'';
+      else if(!t.trim()) ty='';
+      else ty=ExamHwpx.classify([escH(t)])[0].type;
+      if(d.dataset.t!==ty){ if(ty) d.dataset.t=ty; else delete d.dataset.t; }
+      const tag=ty?TAG[ty]:''; if(d.dataset.tag!==tag) d.dataset.tag=tag;
+    }
+  }
+
+  // ---------- 요약·검사 ----------
+  function refresh(){
+    tagLines();
+    const m=getMeta(); const st=ExamHwpx.stats(editorLines());
+    const nO=+m.nObj||0, nS=+m.nSub||0, pO=+m.ptsObj||0, pS=+m.ptsSub||0;
+    const tot=Math.round((pO+pS)*100)/100;
+    const parts=[];
+    parts.push('<span>머리 표: <b>총 '+(nO+nS)+'문항 ('+tot+'점)</b></span>');
+    parts.push('<span>문제에서 찾음: 선택형 <b>'+st.nObj+'</b>개 ('+st.ptsObj+'점) · 서답형 <b>'+st.nSub+'</b>개 ('+st.ptsSub+'점)</span>');
+    const warns=[];
+    if(st.nObj!==nO||st.nSub!==nS) warns.push('문항수가 입력값과 달라요');
+    if(!st.noPts && (Math.abs(st.ptsObj-pO)>0.001||Math.abs(st.ptsSub-pS)>0.001)) warns.push('배점 합계가 입력값과 달라요');
+    if(st.noPts) warns.push('배점 [ ○점 ] 이 없는 발문 '+st.noPts+'개');
+    if(warns.length && (st.nObj+st.nSub)) parts.push('<span class="warn">⚠ '+warns.join(' · ')+'</span> <button class="btn" id="btnFill">찾은 값으로 채우기</button>');
+    else if(st.nObj+st.nSub) parts.push('<span class="okmsg">✓ 문항수·배점이 맞아요</span>');
+    $('summary').innerHTML=parts.join('');
+    const bf=$('btnFill'); if(bf) bf.onclick=()=>{ $('nObj').value=st.nObj; $('nSub').value=st.nSub; if(!st.noPts){ $('ptsObj').value=st.ptsObj; $('ptsSub').value=st.ptsSub; } save(); refresh(); };
+  }
+
+  // ---------- 도구 모음 ----------
+  document.querySelectorAll('[data-cmd]').forEach(b=>b.addEventListener('mousedown',e=>{ e.preventDefault(); document.execCommand(b.dataset.cmd,false,null); save(); }));
+  document.querySelectorAll('[data-wrap]').forEach(b=>b.addEventListener('mousedown',e=>{
+    e.preventDefault(); const k=b.dataset.wrap;
+    const sel=getSelection();
+    if(!sel.rangeCount || !ed.contains(sel.anchorNode)){ ed.focus(); const r=document.createRange(); r.selectNodeContents(ed); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); }
+    const r=sel.getRangeAt(0);
+    // 선택한 줄들을 감싸기 (선택이 없으면 빈 상자)
+    const lineOf=n=>{ while(n && n.parentNode!==ed) n=n.parentNode; return n; };
+    let a=lineOf(r.startContainer), z=lineOf(r.endContainer);
+    if(!a || a===ed){ ed.insertAdjacentHTML('beforeend','<div><br></div>'); a=z=ed.lastChild; }
+    const open=document.createElement('div'); open.textContent='['+k+']';
+    const close=document.createElement('div'); close.textContent='[/'+k+']';
+    const empty = r.collapsed && !a.textContent.trim();
+    if(r.collapsed && !empty){
+      const blank=document.createElement('div'); blank.innerHTML='<br>';
+      z.after(open, blank, close); a=z=blank;
+    } else { a.before(open); z.after(close); }
+    const rr=document.createRange(); rr.selectNodeContents(a); rr.collapse(!r.collapsed); sel.removeAllRanges(); sel.addRange(rr);
+    refresh(); save();
+  }));
+  ed.addEventListener('keydown',e=>{ if(e.key==='Tab'){ e.preventDefault(); document.execCommand('insertText',false,'\t'); } });
+  let refT=0;
+  ed.addEventListener('input',()=>{ if(!ed.firstChild || ed.firstChild.nodeType===3){ normalizeKeep(); } clearTimeout(refT); refT=setTimeout(refresh,150); save(); });
+  function normalizeKeep(){ // 빈 편집기에 바로 친 글자를 div로 감싸기
+    const s=getSelection(); const off=s.rangeCount? s.getRangeAt(0).startOffset:0;
+    if(ed.firstChild && ed.firstChild.nodeType===3){ const d=document.createElement('div'); ed.insertBefore(d,ed.firstChild); d.appendChild(d.nextSibling);
+      const r=document.createRange(); r.setStart(d.firstChild,Math.min(off,d.firstChild.length)); r.collapse(true); s.removeAllRanges(); s.addRange(r); }
+    if(!ed.firstChild) ed.innerHTML='<div><br></div>';
+  }
+  ed.addEventListener('blur',()=>{ if([...ed.childNodes].some(n=>n.nodeName!=='DIV')) normalize(false); });
+  FIELDS.forEach(k=>$(k).addEventListener('input',()=>{ save(); refresh(); }));
+
+  // ---------- 파일 만들기 ----------
+  function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),2600); }
+  async function make(){
+    const m=getMeta();
+    const miss=[]; if(!m.date) miss.push('시험일'); if(!m.subject) miss.push('과목명'); if(!m.code) miss.push('과목코드'); if(!m.nObj) miss.push('선택형 문항수');
+    if(miss.length){ toast('먼저 입력하세요: '+miss.join(', ')); return; }
+    const [y,mo,d]=m.date.split('-').map(Number);
+    m.dateText=y+'년 '+mo+'월 '+d+'일';
+    const year = (m.sem==='1'||mo>=3) ? y : y-1;
+    const btns=[$('btnMake'),$('btnMake2')]; btns.forEach(b=>b.disabled=true);
+    try{
+      const bytes=Uint8Array.from(atob(window.EXAM_TEMPLATE_B64),c=>c.charCodeAt(0));
+      const blob=await ExamHwpx.build(JSZip, bytes, m, editorLines(), {type:'blob'});
+      const name=year+'학년도 '+m.grade+'학년 '+m.sem+'학기 '+m.kind+' '+m.subject+'.hwpx';
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name.replace(/[\\/:*?"<>|]/g,'');
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      toast('다운로드 폴더에 저장했어요: '+a.download);
+    }catch(err){ console.error(err); toast('만들기 실패: '+err.message); }
+    finally{ btns.forEach(b=>b.disabled=false); }
+  }
+  $('btnMake').onclick=make; $('btnMake2').onclick=make;
+
+  $('btnClear').onclick=()=>{ if(!confirm('문제 입력 내용을 모두 지울까요? (시험 정보는 남겨둡니다)')) return; ed.innerHTML='<div><br></div>'; save(); refresh(); };
+  $('btnSample').onclick=()=>{
+    if(ed.textContent.trim() && !confirm('지금 입력한 문제를 예시로 바꿀까요?')) return;
+    const S=[
+      '[1-2] 다음 글을 읽고, 물음에 답하시오.',
+      ' Many students believe that they learn best when they <b>ⓐ<u>reread</u></b> their notes. However, research shows that testing yourself is far more effective. When you try to recall information, your brain <b>ⓑ<u>strengthens</u></b> the memory.',
+      ' This is why short quizzes in class can be so helpful. They are not only a way to check what you know but also a way to <b>ⓒ<u>build</u></b> lasting knowledge.',
+      '',
+      '1. 윗글의 주제로 가장 적절한 것은? [3.5점]',
+      '① the benefits of rereading notes',
+      '② the role of testing in learning',
+      '③ the stress caused by frequent quizzes',
+      '④ the history of classroom exams',
+      '⑤ the importance of sleep for memory',
+      '2. 윗글의 밑줄 친 ⓐ~ⓒ 중 문맥상 낱말의 쓰임이 적절하지 <b><u>않은</u></b> 것은? [3.6점]',
+      '① ⓐ\t② ⓑ\t③ ⓒ',
+      '3. 다음 글의 흐름으로 보아, 주어진 문장이 들어가기에 가장 적절한 곳은? [3.7점]',
+      '[박스]',
+      'For example, a simple walk can improve your mood.',
+      '[/박스]',
+      ' Exercise does not have to be intense to be useful. ( ① ) Even light activity has benefits. ( ② ) It also helps you sleep better. ( ③ ) So try to move a little every day. ( ④ ) Your body will thank you. ( ⑤ )',
+      '서답형 1. 다음 대화를 읽고, &lt;보기&gt;의 단어를 모두 사용하여 빈칸을 완성하시오. [5점]',
+      '[대화]',
+      'Host: What should we eat before exercising?',
+      'Dr. Kim: Something light, such as a banana, is a good choice.',
+      '[/대화]',
+      '[보기]',
+      'light / before / eat / something',
+      '[/보기]',
+      '➜ You should ______________________________.'
+    ];
+    ed.innerHTML=S.map(l=>'<div>'+(l||'<br>')+'</div>').join('');
+    save(); refresh();
+  };
+
+  load(); refresh();
+})();
+</script>
+</body>
+</html>

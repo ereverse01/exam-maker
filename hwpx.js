@@ -299,8 +299,8 @@
     let i = 0;
     p0 = p0.replace(re, () => { i++; return i === 1 ? make(2, 'ODD', '뒷면에 계속☟') : make(1, 'EVEN', '다음 장에 계속☞'); });
     if (i === 1) throw new Error('꼬리말이 하나뿐임');
-    p0 = p0.replace(/footer="2834"/, 'footer="' + (2834 + CONT_L) + '"')
-      .replace(/(<hp:pageBorderFill type="BOTH"[^>]*><hp:offset left="0" right="0" top="0" bottom=")0"/, '$1' + CONT_L + '"');
+    // 테두리는 본문 여백 안에서 끝나고, '계속' 줄은 테두리 바로 아래(쪽 번호 위)에 옴
+    p0 = p0.replace(/footer="2834"/, 'footer="' + (2834 + CONT_L) + '"');
     return { p0, lastFooter: make(3, 'BOTH', '') };
   }
 

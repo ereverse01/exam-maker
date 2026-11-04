@@ -32,8 +32,9 @@
   const textOf = runs => runs.map(r => r.t).join('');
 
   // ---------- 줄 → 블록 분류 ----------
-  const RE_GROUP = /^\s*\[\s*\d+\s*[-~～]\s*\d+\s*\]/;
-  const RE_Q = /^\s*(서답형\s*)?\d+\s*\.(\s|$)/;
+  const RE_GROUP = /^\s*\[\s*(서\s*)?\d+\s*[-~～]\s*(서\s*)?\d+\s*\]/;
+  const RE_Q = /^\s*(서답형\s*|서술형\s*|서\s*)?\d+\s*\.(\s|$)/;
+  const RE_COLBREAK = /^\s*\[\s*다음\s*단\s*\]\s*$/;
   const RE_CHOICE = /^\s*[①②③④⑤]/;
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
   const RE_CLOSE = /^\s*[\[<]\s*\/\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
@@ -47,10 +48,11 @@
       if ((m = t.match(RE_OPEN))) { cur = { type: BLOCK_KIND[m[1]], lines: [] }; out.push(cur); continue; }
       if (RE_CLOSE.test(t)) { cur = null; continue; }
       if (cur) { cur.lines.push(runs); continue; }
+      if (RE_COLBREAK.test(t)) { out.push({ type: 'colbreak' }); continue; }
       if (!t.trim()) out.push({ type: 'blank' });
       else if (RE_GROUP.test(t)) out.push({ type: 'group', runs });
       else if (RE_Q.test(t)) {
-        const sub = /^\s*서답형/.test(t);
+        const sub = /^\s*서/.test(t);
         const pm = t.match(/\[\s*(\d+(?:\.\d+)?)\s*점/);
         out.push({ type: 'q', runs, sub, pts: pm ? +pm[1] : null, num: +(t.match(/(\d+)\s*\./) || [0, 0])[1] });
       }
@@ -140,8 +142,8 @@
 
   // ---------- 문단 만들기 ----------
   const PID = '2147483648';
-  function para(pp, style, runsXml) {
-    return '<hp:p id="' + PID + '" paraPrIDRef="' + pp + '" styleIDRef="' + style + '" pageBreak="0" columnBreak="0" merged="0">' + runsXml + '</hp:p>';
+  function para(pp, style, runsXml, cb) {
+    return '<hp:p id="' + PID + '" paraPrIDRef="' + pp + '" styleIDRef="' + style + '" pageBreak="0" columnBreak="' + (cb ? 1 : 0) + '" merged="0">' + runsXml + '</hp:p>';
   }
   function runsXml(ct, runs, base) { // base: {h, sp, b}
     if (!runs.length) return '<hp:run charPrIDRef="' + ct.get(base) + '"/>';
@@ -170,77 +172,87 @@
       innerParas + '</hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/>' +
       '<hp:cellSz width="25513" height="282"/><hp:cellMargin left="424" right="424" top="283" bottom="283"/></hp:tc></hp:tr></hp:tbl>';
   }
-  function boxPara(ct, inner, height) {
-    return '<hp:p id="' + PID + '" paraPrIDRef="11" styleIDRef="1" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="8">' +
+  function boxPara(ct, inner, height, cb) {
+    return '<hp:p id="' + PID + '" paraPrIDRef="11" styleIDRef="1" pageBreak="0" columnBreak="' + (cb ? 1 : 0) + '" merged="0"><hp:run charPrIDRef="8">' +
       tableXml(inner, height) + '<hp:t/></hp:run></hp:p>';
   }
 
-  // 블록들 → 본문 문단 XML
-  function renderBlocks(ct, blocks, opt) {
-    const P = { h: 1000, sp: 0 }, S = { h: 950, sp: 0 };
-    // 문항/묶음 앞 빈 줄 자동
-    const bl = [];
+  // 블록들 → 문단 계획 (한글 파일 XML과 쪽 맞춤 높이 계산이 같이 씀)
+  // item: {k:'p', pp, style, base:'P'|'S'|'D', runs, head, tabCols, cb} | {k:'box', lines, title, cb}
+  function planBlocks(blocks, opt) {
+    opt = opt || {};
+    const bl = []; let cb = false;
     blocks.forEach((b, k) => {
+      if (b.type === 'colbreak') { cb = true; return; }
       // 선지 사이(발문과 첫 선지 사이 포함) 빈 줄은 뺌
       if (b.type === 'blank' && bl.length && (bl[bl.length - 1].type === 'choice' || bl[bl.length - 1].type === 'q')) {
-        let j = k; while (j < blocks.length && blocks[j].type === 'blank') j++;
+        let j = k; while (j < blocks.length && (blocks[j].type === 'blank' || blocks[j].type === 'colbreak')) j++;
         if (blocks[j] && blocks[j].type === 'choice') return;
       }
-      if (opt.autoGap && (b.type === 'q' || b.type === 'group') && bl.length) {
+      if (cb && b.type === 'blank') return; // 단 첫머리 빈 줄은 뺌
+      // 문항/묶음 앞 빈 줄 자동 (단 첫머리는 빼고)
+      if (opt.autoGap && !cb && (b.type === 'q' || b.type === 'group') && bl.length) {
         const prev = bl[bl.length - 1];
-        const prevGroupLead = prev.type === 'group' || (prev.type === 'passage' && b.type === 'q' && false);
-        if (prev.type !== 'blank' && !prevGroupLead) bl.push({ type: 'blank', auto: true });
+        if (prev.type !== 'blank' && prev.type !== 'group') bl.push({ type: 'blank', auto: true });
       }
-      bl.push(b);
+      bl.push(cb ? Object.assign({}, b, { cb: true }) : b); cb = false;
     });
-    let xml = '';
+    const items = [];
     for (let k = 0; k < bl.length; k++) {
-      const b = bl[k];
-      if (b.type === 'blank') xml += para(6, 0, '<hp:run charPrIDRef="' + ct.get(P) + '"/>');
-      else if (b.type === 'group') xml += para(11, 1, runsXml(ct, boldPrefix(b.runs, RE_GROUP), S));
-      else if (b.type === 'q') xml += para(11, 1, runsXml(ct, boldPrefix(b.runs, RE_Q), S));
+      const b = bl[k], cb = !!b.cb;
+      if (b.type === 'blank') items.push({ k: 'p', pp: 6, style: 0, base: 'P', runs: [], cb });
+      else if (b.type === 'group') items.push({ k: 'p', pp: 11, style: 1, base: 'S', runs: boldPrefix(b.runs, RE_GROUP), cb });
+      else if (b.type === 'q') items.push({ k: 'p', pp: 11, style: 1, base: 'S', runs: boldPrefix(b.runs, RE_Q), cb });
       else if (b.type === 'choice') {
         // 이어진 선지 줄들 중 한 줄에 가장 많이 들어간 개수로 칸을 맞춤 (①②③ / ④⑤ → 3칸)
         let s = k, cols = 0;
         while (s > 0 && bl[s - 1].type === 'choice') s--;
         for (let j = s; j < bl.length && bl[j].type === 'choice'; j++) cols = Math.max(cols, (textOf(bl[j].runs).match(/[①②③④⑤]/g) || []).length);
-        const t = textOf(b.runs);
-        const pp = t.indexOf('\t') >= 0 && opt.choiceTabs[cols] ? opt.choiceTabs[cols] : 51;
-        xml += para(pp, 2, runsXml(ct, b.runs, S));
+        const tab = textOf(b.runs).indexOf('\t') >= 0 && cols >= 2;
+        items.push({ k: 'p', pp: 51, tabCols: tab ? cols : 0, style: 2, base: 'S', runs: b.runs, cb });
       }
       else if (b.type === 'passage') {
-        const prevP = bl[k - 1] && bl[k - 1].type === 'passage', nextP = bl[k + 1] && bl[k + 1].type === 'passage';
-        const pp = !prevP && !nextP ? 6 : !prevP ? 28 : nextP ? 20 : 38;
-        xml += para(pp, 0, runsXml(ct, b.runs, P));
+        const prevP = bl[k - 1] && bl[k - 1].type === 'passage' && !cb, nextP = bl[k + 1] && bl[k + 1].type === 'passage' && !bl[k + 1].cb;
+        const pp = !prevP ? (nextP ? 28 : 6) : nextP ? 20 : 38;
+        items.push({ k: 'p', pp, style: 0, base: 'P', runs: b.runs, cb });
       }
-      else if (b.type === 'box') {
-        const lines = b.lines.length ? b.lines : [[]];
-        const inner = lines.map(r => para(14, 3, runsXml(ct, r, S))).join('');
-        xml += boxPara(ct, inner, 282 + 1430 * lines.length);
-      }
-      else if (b.type === 'bogi') {
-        const lines = b.lines.length ? b.lines : [[]];
-        const inner = para(19, 3, '<hp:run charPrIDRef="' + ct.get({ h: 1000, sp: 0, b: true }) + '"><hp:t>&lt; 보 기 &gt;</hp:t></hp:run>') +
-          lines.map(r => para(19, 3, runsXml(ct, r, S))).join('');
-        xml += boxPara(ct, inner, 282 + 1520 * (lines.length + 1));
-      }
+      else if (b.type === 'box') items.push({ k: 'box', lines: b.lines.length ? b.lines : [[]], title: false, cb });
+      else if (b.type === 'bogi') items.push({ k: 'box', lines: b.lines.length ? b.lines : [[]], title: true, cb });
       else if (b.type === 'dialog') {
-        const D = { h: 1000, sp: -3 };
         b.lines.forEach((runs, j) => {
+          const c = cb && j === 0;
           const t = textOf(runs);
-          if (!t.trim()) { xml += para(6, 0, '<hp:run charPrIDRef="' + ct.get(P) + '"/>'); return; }
+          if (!t.trim()) { items.push({ k: 'p', pp: 6, style: 0, base: 'P', runs: [], cb: c }); return; }
           let speaker = '', rest = runs;
           if (runs[0] && runs[0].b && runs.length > 1) { speaker = runs[0].t.trim(); rest = runs.slice(1); }
           else {
             const m = t.match(/^\s*([^:：\t]{1,25}?)\s*(?:[:：]|\t)\s*/);
             if (m) { speaker = m[1]; rest = sliceRuns(runs, m[0].length); }
           }
-          rest = trimStart(rest);
-          const head = speaker ? '<hp:run charPrIDRef="' + ct.get({ h: 1000, sp: -3, b: true }) + '"><hp:t>' + esc(speaker) + '</hp:t></hp:run>' +
-            '<hp:run charPrIDRef="' + ct.get(D) + '"><hp:t><hp:fwSpace/><hp:fwSpace/><hp:fwSpace/></hp:t></hp:run>' : '';
-          xml += para(j === 0 ? 51 : 52, 2, head + (rest.length ? runsXml(ct, rest, D) : ''));
+          items.push({ k: 'p', pp: j === 0 ? 51 : 52, style: 2, base: 'D', head: speaker, runs: trimStart(rest), cb: c });
         });
       }
+    }
+    return items;
+  }
+
+  // 문단 계획 → 본문 XML
+  function renderBlocks(ct, blocks, opt) {
+    const BASE = { P: { h: 1000, sp: 0 }, S: { h: 950, sp: 0 }, D: { h: 1000, sp: -3 } };
+    let xml = '';
+    for (const it of planBlocks(blocks, opt)) {
+      if (it.k === 'box') {
+        let inner = it.title ? para(19, 3, '<hp:run charPrIDRef="' + ct.get({ h: 1000, sp: 0, b: true }) + '"><hp:t>&lt; 보 기 &gt;</hp:t></hp:run>') : '';
+        inner += it.lines.map(r => para(it.title ? 19 : 14, 3, runsXml(ct, r, BASE.S))).join('');
+        xml += boxPara(ct, inner, it.title ? 282 + 1520 * (it.lines.length + 1) : 282 + 1430 * it.lines.length, it.cb);
+        continue;
+      }
+      const base = BASE[it.base];
+      if (!it.runs.length && !it.head) { xml += para(it.pp, it.style, '<hp:run charPrIDRef="' + ct.get(base) + '"/>', it.cb); continue; }
+      const pp = it.tabCols && opt.choiceTabs[it.tabCols] ? opt.choiceTabs[it.tabCols] : it.pp;
+      const head = it.head ? '<hp:run charPrIDRef="' + ct.get({ h: 1000, sp: -3, b: true }) + '"><hp:t>' + esc(it.head) + '</hp:t></hp:run>' +
+        '<hp:run charPrIDRef="' + ct.get(base) + '"><hp:t><hp:fwSpace/><hp:fwSpace/><hp:fwSpace/></hp:t></hp:run>' : '';
+      xml += para(pp, it.style, head + (it.runs.length ? runsXml(ct, it.runs, base) : ''), it.cb);
     }
     return xml;
   }
@@ -372,6 +384,6 @@
     return { blocks: bl, nObj: obj.length, nSub: sub.length, ptsObj: sum(obj), ptsSub: sum(sub), noPts: qs.filter(q => q.pts == null).length };
   }
 
-  const api = { build, classify, parseLine, stats };
+  const api = { build, classify, parseLine, stats, planBlocks, textOf, RE_Q, RE_GROUP, RE_COLBREAK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ExamHwpx = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -181,6 +181,11 @@
     // 문항/묶음 앞 빈 줄 자동
     const bl = [];
     blocks.forEach((b, k) => {
+      // 선지 사이(발문과 첫 선지 사이 포함) 빈 줄은 뺌
+      if (b.type === 'blank' && bl.length && (bl[bl.length - 1].type === 'choice' || bl[bl.length - 1].type === 'q')) {
+        let j = k; while (j < blocks.length && blocks[j].type === 'blank') j++;
+        if (blocks[j] && blocks[j].type === 'choice') return;
+      }
       if (opt.autoGap && (b.type === 'q' || b.type === 'group') && bl.length) {
         const prev = bl[bl.length - 1];
         const prevGroupLead = prev.type === 'group' || (prev.type === 'passage' && b.type === 'q' && false);

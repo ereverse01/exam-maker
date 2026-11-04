@@ -52,7 +52,7 @@
   #editor{min-height:520px;padding:14px 16px 14px 88px;outline:none;white-space:pre-wrap;tab-size:6;
     font-family:"함초롬바탕","HCR Batang","Batang","바탕",serif;font-size:15.5px;line-height:1.75;word-break:keep-all;overflow-wrap:anywhere}
   #editor:focus{box-shadow:0 0 0 3px var(--accent-soft);border-radius:10px}
-  #editor > div{position:relative;padding-left:8px;border-left:3px solid transparent;min-height:1.75em}
+  #editor > div{text-align:justify;position:relative;padding-left:8px;border-left:3px solid transparent;min-height:1.75em}
   #editor > div::before{content:attr(data-tag);position:absolute;left:-80px;width:68px;text-align:right;font:12px/1.75 "Malgun Gothic",sans-serif;color:var(--tc,var(--sub));top:0;user-select:none;pointer-events:none}
   #editor > div[data-t="group"]{--tc:var(--t-group);border-left-color:var(--t-group)}
   #editor > div[data-t="q"]{--tc:var(--t-q);border-left-color:var(--t-q)}
@@ -108,7 +108,7 @@
   </section>
 
   <section class="card">
-    <h2>② 문제 입력 <small>한글에서 복사해 붙여넣으면 굵게·밑줄이 그대로 들어옵니다</small></h2>
+    <h2>② 문제 입력 <small>한글·워드에서 복사해 붙여넣으면 굵게·밑줄이 그대로, 갈라진 줄은 한 문단으로 합쳐져 들어옵니다</small></h2>
     <div class="toolbar">
       <button class="btn" data-cmd="bold" title="Ctrl+B"><b>굵게</b></button>
       <button class="btn" data-cmd="underline" title="Ctrl+U"><u>밑줄</u></button>
@@ -118,6 +118,8 @@
       <button class="btn" data-wrap="박스">▭ 박스</button>
       <button class="btn" data-wrap="보기">▭ &lt;보기&gt;</button>
       <button class="btn" data-wrap="대화">💬 대화문</button>
+      <span class="sep"></span>
+      <button class="btn" id="btnJoin" title="갈라진 줄을 한 문단으로 잇고 빈 줄을 지웁니다">↵ 끊긴 줄 합치기</button>
     </div>
     <div class="ed-wrap"><div id="editor" contenteditable="true" spellcheck="false"></div></div>
     <details class="help">
@@ -127,7 +129,8 @@
         <tr><td>발문</td><td><code>3. 다음 글의 제목으로 … [3.6점]</code> / <code>서답형 1. …</code> — 번호와 점으로 시작하는 줄 (번호는 자동으로 굵게)</td></tr>
         <tr><td>선지</td><td><code>①</code>~<code>⑤</code>로 시작하는 줄. 한 줄에 여러 개는 <b>Tab</b> 키로 띄우세요</td></tr>
         <tr><td>지문</td><td>나머지 모든 줄. 줄 하나 = 문단 하나</td></tr>
-        <tr><td>빈 줄</td><td>빈 줄 그대로 들어갑니다. 문항 앞에는 빈 줄이 없으면 하나 자동으로 넣습니다</td></tr>
+        <tr><td>붙여넣기</td><td>붙여넣으면 한 문단이 여러 줄로 갈라진 것을 자동으로 이어 붙이고 빈 줄을 지웁니다. 새 문단은 번호·①~⑤·[1-2]·들여쓰기(앞 칸 띄움)·<code>이름:</code> 으로 시작하는 줄. 그대로 붙이려면 <b>Ctrl+Shift+V</b>. 이미 넣은 글은 <b>↵ 끊긴 줄 합치기</b> 버튼</td></tr>
+        <tr><td>빈 줄</td><td>문항 앞에는 빈 줄이 자동으로 들어갑니다. 선지 사이 빈 줄은 한글 파일에서 빠집니다</td></tr>
         <tr><td>박스</td><td><code>[박스]</code> 와 <code>[/박스]</code> 사이 줄 — 주어진 문장, 요약문 상자</td></tr>
         <tr><td>&lt;보기&gt;</td><td><code>[보기]</code> 와 <code>[/보기]</code> 사이 줄 — 위에 &lt; 보 기 &gt; 제목이 붙은 상자</td></tr>
         <tr><td>대화문</td><td><code>[대화]</code> 와 <code>[/대화]</code> 사이 줄 — <code>Host: 내용</code> 처럼 쓰면 이름이 굵게, 둘째 줄부터 들여쓰기</td></tr>
@@ -171,29 +174,64 @@
   const escH = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   function wrap(t,f){ if(!t) return ''; let s=escH(t); if(f.i) s='<i>'+s+'</i>'; if(f.u) s='<u>'+s+'</u>'; if(f.b) s='<b>'+s+'</b>'; return s; }
   const BLOCK=/^(DIV|P|LI|H[1-6]|TR|BLOCKQUOTE|TABLE|UL|OL|SECTION|ARTICLE|PRE)$/;
-  // root 안의 내용을 줄(간단한 HTML) 배열로. styleOf(el) → {b,u,i} 추가 서식
-  function toLines(root, styleOf){
-    const lines=[]; let cur=''; let has=false;
-    const flush=()=>{ lines.push(cur); cur=''; has=false; };
+  // root 안의 내용을 줄(간단한 HTML) 배열로. styleOf(el) → {b,u,i,ind} 추가 서식
+  // paste=true: 붙여넣은 HTML — 소스 속 줄바꿈·여러 칸 공백을 브라우저처럼 한 칸으로, 워드 탭은 Tab으로
+  function toLines(root, styleOf, paste){
+    const lines=[]; let cur=''; let has=false; let ind=false;
+    const flush=()=>{ lines.push(paste?cur.replace(/[ \u00a0]+$/,''):cur); cur=''; has=false; ind=false; };
     (function walk(node,f){
       for(const n of node.childNodes){
-        if(n.nodeType===3){ const t=n.data.replace(/ /g,' ').replace(/​/g,''); if(t){ cur+=wrap(t,f); has=true; } continue; }
+        if(n.nodeType===3){
+          let t=n.data;
+          if(paste){ t=t.replace(/[\r\n]+/g,' ').replace(/ {2,}/g,' '); if(!has) t=t.replace(/^ +/,''); }
+          t=t.replace(/\u00a0/g,' ').replace(/\u200b/g,'');
+          if(t){ if(ind && !has) t=' '+t.replace(/^ +/,''); cur+=wrap(t,f); has=true; }
+          continue; }
         if(n.nodeType!==1) continue;
         const nm=n.nodeName;
         if(nm==='BR'){ if(!has && n===n.parentNode.lastChild && n.parentNode!==root){ lines.push(''); } else flush(); continue; }
         if(nm==='STYLE'||nm==='SCRIPT'||nm==='HEAD'||nm==='TITLE'||nm==='META') continue;
+        if(paste && /mso-tab-count/i.test(n.getAttribute('style')||'')){ cur+='\t'; has=true; continue; }
         const g=Object.assign({},f);
         if(nm==='B'||nm==='STRONG') g.b=1; if(nm==='U') g.u=1; if(nm==='I'||nm==='EM') g.i=1;
-        if(styleOf){ const s=styleOf(n); if(s.b!=null) g.b=s.b; if(s.u) g.u=1; if(s.i!=null) g.i=s.i; }
+        const s=styleOf?styleOf(n):{};
+        if(s.b!=null) g.b=s.b; if(s.u) g.u=1; if(s.i!=null) g.i=s.i;
         const block=BLOCK.test(nm)||nm==='TD'||nm==='TH';
         if(block && has) flush();
+        if(block && s.ind) ind=true;
         const before=lines.length;
         walk(n,g);
-        if(block){ if(has) flush(); else if(lines.length===before && (nm==='DIV'||nm==='P')) lines.push(''); }
+        if(block){ if(has) flush(); else if(lines.length===before && (nm==='DIV'||nm==='P')) lines.push(''); ind=false; }
       }
     })(root,{});
     if(has) flush();
     return lines;
+  }
+
+  // ---------- 끊긴 줄 이어 붙이기 ----------
+  // 워드·PDF에서 한 문단이 여러 줄로 갈라져 들어온 것을 다시 한 문단으로. 빈 줄은 모두 지움
+  // (문항 앞 빈 줄은 한글 파일 만들 때 자동으로 들어감)
+  const plainOf=h=>h.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+  const J_MARK=/^\s*[\[<]\s*\/?\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
+  const J_HEAD=/^\s*(\[\s*\d+\s*[-~～]\s*\d+\s*\]|(서답형\s*)?\d+\s*\.(\s|$))/;
+  const J_NEW=/^(\s|[①②③④⑤]|\[\s*\d+\s*[-~～]\s*\d+\s*\]|(서답형\s*)?\d+\s*\.(\s|$)|[➜→※▶•*<]|\(\s*[A-Ea-e가-마]\s*\)|[A-Z][A-Za-z.'’]*(?: [A-Z][A-Za-z.'’]*){0,2}\s*[:：]\s|[가-힣]{1,4}\s*[:：]\s)/;
+  const J_PTS=/^\s*\[\s*\d+(\.\d+)?\s*점\s*\]/;
+  function joinLines(lines){
+    const out=[]; let sep=true;
+    for(const l of lines){
+      const t=plainOf(l);
+      if(!t.trim()){ sep=true; continue; }
+      const mark=J_MARK.test(t);
+      const prev=out.length?plainOf(out[out.length-1]):'';
+      const prevMark=J_MARK.test(prev);
+      const prevHeadDone=J_HEAD.test(prev) && /[\]?？.)]\s*$/.test(prev);
+      const glue = out.length && !mark && !prevMark && (J_PTS.test(t) || (!sep && !prevHeadDone && !J_NEW.test(t)));
+      if(glue){ const p=out[out.length-1].replace(/[ \t]+$/,''); const q=l.replace(/^[ \t]+/,'');
+        out[out.length-1]=p+(/[-‐]$/.test(plainOf(p)) && /^[a-z]/.test(plainOf(q))?'':' ')+q; }
+      else out.push(l.replace(/[ \t]+$/,''));
+      sep=false;
+    }
+    return out;
   }
   const editorLines = () => toLines(ed, el => { const st=el.style; const o={};
     if(st.fontWeight){ o.b = (st.fontWeight==='bold'||+st.fontWeight>=600)?1:0; }
@@ -213,19 +251,25 @@
       const fw=cs.fontWeight; o.b=(fw==='bold'||+fw>=600)?1:0;
       if(/underline/.test(cs.textDecorationLine||cs.textDecoration||'')) o.u=1;
       o.i=cs.fontStyle==='italic'?1:0;
+      if(parseFloat(cs.textIndent)>0) o.ind=1;
       return o;
-    });
+    }, true);
     fr.remove();
     // 앞뒤 빈 줄 정리
     while(lines.length && !lines[0].replace(/<[^>]+>/g,'').trim()) lines.shift();
     while(lines.length && !lines[lines.length-1].replace(/<[^>]+>/g,'').trim()) lines.pop();
     return lines;
   }
+  // Ctrl+Shift+V: 줄을 합치지 않고 그대로 붙여넣기
+  let rawPaste=false;
+  ed.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey) && e.shiftKey && (e.key==='V'||e.key==='v')) rawPaste=true; });
   const MARK='⁣⁣';
   ed.addEventListener('paste', e=>{
     e.preventDefault();
     const cd=e.clipboardData; const html=cd.getData('text/html'); const text=cd.getData('text/plain');
     let lines = html ? htmlToLines(html) : text.replace(/\r/g,'').split('\n').map(escH);
+    if(!rawPaste) lines=joinLines(lines);
+    rawPaste=false;
     if(!lines.length) return;
     lines[lines.length-1]+=MARK;
     const one = lines.length===1;
@@ -342,6 +386,12 @@
   }
   $('btnMake').onclick=make; $('btnMake2').onclick=make;
 
+  $('btnJoin').onclick=()=>{
+    const before=editorLines(); const after=joinLines(before);
+    if(after.length===before.length && after.every((l,i)=>l===before[i])){ toast('합칠 줄이 없어요'); return; }
+    ed.innerHTML=after.map(l=>'<div>'+(l||'<br>')+'</div>').join('')||'<div><br></div>';
+    save(); refresh(); toast(before.length+'줄 → '+after.length+'줄로 정리했어요');
+  };
   $('btnClear').onclick=()=>{ if(!confirm('문제 입력 내용을 모두 지울까요? (시험 정보는 남겨둡니다)')) return; ed.innerHTML='<div><br></div>'; save(); refresh(); };
   $('btnSample').onclick=()=>{
     if(ed.textContent.trim() && !confirm('지금 입력한 문제를 예시로 바꿀까요?')) return;

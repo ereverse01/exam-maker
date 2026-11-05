@@ -75,53 +75,67 @@
   }
 
   // ---------- 문항 단위로 묶기 ----------
+  // unit: {lines, group, pin, idx, start, end}  start~end(미포함) = 편집기 줄 번호 범위 ([고정] 줄·뒤 빈 줄 포함)
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/, RE_CLOSE = /^\s*[\[<]\s*\/\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
+  const RE_PIN = /^\s*\[\s*고정\s*\]\s*$/;
   function toUnits(lines) {
-    const pre = [], units = []; let cur = null, inside = false, groupLeft = 0;
+    const pre = [], units = []; let cur = null, inside = false, groupLeft = 0, pinAt = -1;
     const add = l => (cur ? cur.lines : pre).push(l);
-    for (const l of lines) {
+    const start = (i, l, group) => {
+      if (cur) cur.end = pinAt >= 0 ? pinAt : i;
+      cur = { lines: [l], group, pin: pinAt >= 0, idx: units.length, start: pinAt >= 0 ? pinAt : i };
+      units.push(cur); pinAt = -1;
+    };
+    lines.forEach((l, i) => {
       const t = plain(l);
-      if (RE_OPEN.test(t)) { inside = true; add(l); continue; }
-      if (RE_CLOSE.test(t)) { inside = false; add(l); continue; }
-      if (inside) { add(l); continue; }
-      if (H.RE_COLBREAK.test(t)) continue;
-      if (!t.trim()) { if (cur) cur.lines.push(''); else if (pre.length) pre.push(''); continue; }
+      if (RE_OPEN.test(t)) { inside = true; add(l); return; }
+      if (RE_CLOSE.test(t)) { inside = false; add(l); return; }
+      if (inside) { add(l); return; }
+      if (H.RE_COLBREAK.test(t)) return;
+      if (RE_PIN.test(t)) { pinAt = i; return; }
+      if (!t.trim()) { if (cur) cur.lines.push(''); else if (pre.length) pre.push(''); return; }
       if (H.RE_GROUP.test(t)) {
         const m = t.match(/\[\s*(?:서\s*)?(\d+)\s*[-~～]\s*(?:서\s*)?(\d+)\s*\]/);
         groupLeft = m ? Math.max(1, +m[2] - +m[1] + 1) : 1;
-        cur = { lines: [l], group: true, idx: units.length }; units.push(cur); continue;
+        start(i, l, true); return;
       }
       if (H.RE_Q.test(t)) {
-        if (cur && cur.group && groupLeft > 0) { groupLeft--; cur.lines.push(l); continue; }
+        if (cur && cur.group && groupLeft > 0) { groupLeft--; cur.lines.push(l); pinAt = -1; return; }
         groupLeft = 0;
-        cur = { lines: [l], group: false, idx: units.length }; units.push(cur); continue;
+        start(i, l, false); return;
       }
+      pinAt = -1;
       add(l);
-    }
+    });
+    if (cur) cur.end = lines.length;
     for (const u of units) { while (u.lines.length && !plain(u.lines[u.lines.length - 1]).trim()) u.lines.pop(); }
     while (pre.length && !plain(pre[pre.length - 1]).trim()) pre.pop();
     return { pre, units };
   }
 
   // ---------- 단에 담기 ----------
-  function pack(units, firstCap) {
-    const rem = units.slice(); const cols = [];
+  // keepOrder: 지금 순서 그대로 (못 들어가면 다음 단으로만 넘김)
+  // 아니면: 📌 고정 문항은 지금 순서 자리(몇 번째 문항)에 두고, 나머지로 빈자리를 채움
+  function pack(units, firstCap, keepOrder) {
+    const cols = [];
+    const newCol = () => ({ units: [], used: 0, cap: COL_H - SAFE, carry: false });
     let col = { units: [], used: 0, cap: firstCap - SAFE, carry: false };
-    while (rem.length) {
-      let pick = -1;
-      for (let i = 0; i < rem.length; i++) {
-        const need = rem[i].h + (col.units.length || col.carry ? GAP : 0);
-        if (col.used + need <= col.cap) { pick = i; break; }
-      }
-      if (pick < 0) {
-        if (col.units.length || col.carry) { cols.push(col); col = { units: [], used: 0, cap: COL_H - SAFE, carry: false }; continue; }
-        pick = 0; // 한 단보다 긴 문항: 단 첫머리에 두고 다음 단으로 넘어가게
-      }
-      const u = rem.splice(pick, 1)[0];
-      col.used += u.h + (col.units.length || col.carry ? GAP : 0); col.units.push(u);
-      if (col.used > col.cap) { // 넘친 만큼 다음 단에 이어짐
+    const gapOf = () => (col.units.length || col.carry ? GAP : 0);
+    const fits = u => col.used + u.h + gapOf() <= col.cap;
+    const pinAt = new Map(); const rem = [];
+    units.forEach(u => { if (!keepOrder && u.pin) pinAt.set(u.idx, u); else rem.push(u); });
+    let n = 0;
+    while (n < units.length) {
+      let u, i = -1;
+      if (pinAt.has(n)) u = pinAt.get(n);
+      else if (keepOrder) { i = 0; u = rem[0]; }
+      else { i = rem.findIndex(fits); if (i < 0) i = 0; u = rem[i]; }
+      if (!fits(u) && (col.units.length || col.carry)) { cols.push(col); col = newCol(); continue; }
+      if (i >= 0) rem.splice(i, 1);
+      col.used += u.h + gapOf(); col.units.push(u); n++;
+      if (col.used > col.cap) { // 한 단보다 긴 문항: 넘친 만큼 다음 단에 이어짐
         const over = col.used - col.cap; u.tooTall = true;
-        cols.push(col); col = { units: [], used: over, cap: COL_H - SAFE, carry: true };
+        cols.push(col); col = newCol(); col.used = over; col.carry = true;
       }
     }
     if (col.units.length) cols.push(col);
@@ -150,13 +164,14 @@
     return { nO, nS };
   }
 
-  // lines(편집기 줄) → 새 줄 + 정보
+  // lines(편집기 줄) → 새 줄 + 정보.  opt.keepOrder: 순서는 그대로 두고 번호·단 나눔만
   function arrange(lines, opt) {
+    opt = opt || {};
     const { pre, units } = toUnits(lines);
     if (!units.length) return null;
     const preH = pre.length ? heightOf(pre) : 0;
-    for (const u of units) u.h = opt && opt.heights ? opt.heights[u.idx] : heightOf(u.lines);
-    const cols = pack(units, COL_H - FIRST_TOP - preH - (pre.length ? GAP : 0));
+    for (const u of units) u.h = opt.heights ? opt.heights[u.idx] : heightOf(u.lines);
+    const cols = pack(units, COL_H - FIRST_TOP - preH - (pre.length ? GAP : 0), !!opt.keepOrder);
     const order = [].concat(...cols.map(c => c.units));
     const counts = renumber(order);
     const out = pre.slice(); if (pre.length) out.push('');
@@ -164,6 +179,7 @@
       c.units.forEach((u, ui) => {
         if (ui === 0 && ci > 0 && !c.carry) out.push('[다음 단]');
         else if (out.length && plain(out[out.length - 1]).trim()) out.push('');
+        if (u.pin) out.push('[고정]');
         out.push(...u.lines);
       });
     });
@@ -173,9 +189,9 @@
     return {
       lines: out, cols: cols.length, pages: Math.ceil(cols.length / 2), moved,
       tooTall: units.filter(u => u.tooTall).length, endFits: last.used + END_H <= last.cap + SAFE,
-      nObj: counts.nO, nSub: counts.nS
+      nObj: counts.nO, nSub: counts.nS, pins: units.filter(u => u.pin).length
     };
   }
 
-  root.ExamLayout = { arrange, heightOf, toUnits, lineCount, itemHeight, COL_W };
+  root.ExamLayout = { arrange, heightOf, toUnits, lineCount, itemHeight, COL_W, RE_PIN };
 })(typeof window !== 'undefined' ? window : globalThis);

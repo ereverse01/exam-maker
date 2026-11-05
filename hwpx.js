@@ -49,6 +49,7 @@
       if (RE_CLOSE.test(t)) { cur = null; continue; }
       if (cur) { cur.lines.push(runs); continue; }
       if (RE_COLBREAK.test(t)) { out.push({ type: 'colbreak' }); continue; }
+      if (/^\s*\[\s*고정\s*\]\s*$/.test(t)) continue; // 📌 고정 표시 (편집기에서만)
       if (!t.trim()) out.push({ type: 'blank' });
       else if (RE_GROUP.test(t)) out.push({ type: 'group', runs });
       else if (RE_Q.test(t)) {

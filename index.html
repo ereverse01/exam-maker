@@ -93,12 +93,36 @@
     #editor > div::before{position:static;display:block;width:auto;text-align:left;font-size:11px;line-height:1.3}
     header{flex-wrap:wrap}
   }
+  .lock{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
+  .lock[hidden]{display:none}
+  .lock form{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px;width:100%;max-width:360px;display:grid;gap:12px;text-align:center}
+  .lock h2{margin:0;font-size:19px}
+  .lock p{margin:0;color:var(--sub);font-size:13.5px}
+  .lock input{font:inherit;font-size:16px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%}
+  .lock input[hidden]{display:none}
+  .lock input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .lock .err{color:#dc2626;font-size:13.5px;min-height:1.2em}
+  .lock .link{background:none;border:0;color:var(--sub);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer}
+  .lock .link[hidden]{display:none}
+  body.locked > header, body.locked > main{visibility:hidden}
 </style>
 </head>
-<body>
+<body class="locked">
+<div class="lock" id="lock">
+  <form id="lockForm" autocomplete="off">
+    <h2>🔒 시험지 편집기</h2>
+    <p id="lockMsg">비밀번호를 입력하세요</p>
+    <input type="password" id="pw1" placeholder="비밀번호" autocomplete="current-password">
+    <input type="password" id="pw2" placeholder="비밀번호 한 번 더" hidden autocomplete="new-password">
+    <div class="err" id="lockErr"></div>
+    <button class="btn primary" id="lockGo" type="submit">열기</button>
+    <button class="link" id="lockReset" type="button">비밀번호를 잊었어요</button>
+  </form>
+</div>
 <header>
   <h1>📝 시험지 편집기</h1>
   <span class="sp"></span>
+  <button class="btn" id="btnLock" title="자리를 비울 때 (30분 동안 손대지 않으면 저절로 잠겨요)">🔒 잠그기</button>
   <button class="btn" id="btnSample">예시 넣기</button>
   <button class="btn" id="btnClear">새 시험지</button>
   <button class="btn primary" id="btnMake">한글 파일 만들기</button>
@@ -177,18 +201,106 @@
   const DEF = {grade:'1',sem:'1',kind:'중간',date:'',subject:'',category:'공통과목',code:'',nObj:'',ptsObj:'',nSub:'',ptsSub:'',school:'면목고등학교'};
   try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
 
-  // ---------- 저장 ----------
-  function load(){
-    let s=null; try{ s=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(e){}
+  // ---------- 저장 (비밀번호로 암호화) ----------
+  // 이 기기의 브라우저에만, AES-GCM으로 암호화해 저장. 비밀번호 자체는 어디에도 저장하지 않음.
+  const LOCK_KEY='examMaker.lock.v1';
+  const enc=new TextEncoder(), dec=new TextDecoder();
+  const b64=u=>{ const a=new Uint8Array(u); let s=''; for(let i=0;i<a.length;i+=0x8000) s+=String.fromCharCode.apply(null,a.subarray(i,i+0x8000)); return btoa(s); };
+  const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+  let cKey=null, salt=null;
+  async function deriveKey(pw,sl){
+    const base=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);
+    return crypto.subtle.deriveKey({name:'PBKDF2',salt:sl,iterations:300000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+  }
+  async function sealData(obj){
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},cKey,enc.encode(JSON.stringify(obj)));
+    localStorage.setItem(LOCK_KEY,JSON.stringify({salt:b64(salt),iv:b64(iv),ct:b64(ct)}));
+  }
+  function readLock(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)||'null'); }catch(e){ return null; } }
+  function apply(s){
     const m=Object.assign({},DEF,(s&&s.meta)||{});
     FIELDS.forEach(k=>{ $(k).value=m[k]; });
     ed.innerHTML=(s&&s.html)||'<div><br></div>';
   }
   let saveT=0;
   function save(){
+    if(!cKey) return;
     clearTimeout(saveT);
-    saveT=setTimeout(()=>{ try{ localStorage.setItem(KEY,JSON.stringify({meta:getMeta(),html:ed.innerHTML})); }catch(e){} },400);
+    saveT=setTimeout(saveNow,400);
   }
+  function saveNow(){
+    clearTimeout(saveT); saveT=0;
+    if(!cKey) return Promise.resolve();
+    return sealData({meta:getMeta(),html:ed.innerHTML}).catch(()=>{});
+  }
+
+  // ---------- 잠금 화면 ----------
+  const lockEl=$('lock'), pw1=$('pw1'), pw2=$('pw2'), lockErr=$('lockErr'), lockGo=$('lockGo');
+  let setupMode=false;
+  function showLock(){
+    const has=!!readLock();
+    setupMode=!has;
+    $('lockMsg').textContent=has?'비밀번호를 입력하세요':'이 컴퓨터에서 쓸 비밀번호를 정하세요 (4자 이상)';
+    pw2.hidden=has; lockGo.textContent=has?'열기':'비밀번호 정하기';
+    $('lockReset').hidden=!has;
+    pw1.value=''; pw2.value=''; lockErr.textContent='';
+    document.body.classList.add('locked'); lockEl.hidden=false;
+    setTimeout(()=>pw1.focus(),30);
+  }
+  function unlocked(){
+    document.body.classList.remove('locked'); lockEl.hidden=true;
+    pw1.value=''; pw2.value='';
+    refresh(); bumpIdle();
+  }
+  $('lockForm').addEventListener('submit',async e=>{
+    e.preventDefault();
+    const pw=pw1.value; lockErr.textContent='';
+    if(setupMode){
+      if(pw.length<4){ lockErr.textContent='4자 이상으로 정해 주세요'; return; }
+      if(pw!==pw2.value){ lockErr.textContent='두 비밀번호가 달라요'; return; }
+    }else if(!pw){ return; }
+    lockGo.disabled=true;
+    try{
+      if(setupMode){
+        salt=crypto.getRandomValues(new Uint8Array(16));
+        cKey=await deriveKey(pw,salt);
+        // 예전(암호화 전) 저장분이 있으면 옮겨 담고 지움
+        let old=null; try{ old=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){}
+        apply(old);
+        await sealData({meta:getMeta(),html:ed.innerHTML});
+        localStorage.removeItem(KEY);
+        unlocked();
+      }else{
+        const L=readLock(); const sl=unb64(L.salt);
+        const k=await deriveKey(pw,sl);
+        let obj;
+        try{
+          const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(L.iv)},k,unb64(L.ct));
+          obj=JSON.parse(dec.decode(pt));
+        }catch(_){ lockErr.textContent='비밀번호가 틀렸어요'; pw1.select(); return; }
+        cKey=k; salt=sl; apply(obj); unlocked();
+      }
+    }catch(err){ lockErr.textContent='이 브라우저에서는 잠금을 쓸 수 없어요: '+err.message; }
+    finally{ lockGo.disabled=false; }
+  });
+  $('lockReset').onclick=()=>{
+    if(!confirm('비밀번호를 새로 정하면 이 컴퓨터에 저장된 시험 문제가 모두 지워집니다.\n(지운 문제는 되살릴 수 없어요) 계속할까요?')) return;
+    localStorage.removeItem(LOCK_KEY); localStorage.removeItem(KEY);
+    showLock();
+  };
+  async function lockNow(){
+    await saveNow();
+    cKey=null; salt=null; clearTimeout(idleT);
+    ed.innerHTML=''; FIELDS.forEach(k=>{ $(k).value=''; });
+    showLock();
+  }
+  $('btnLock').onclick=lockNow;
+  // 30분 동안 손대지 않으면 자동 잠금
+  let idleT=0;
+  function bumpIdle(){ clearTimeout(idleT); if(cKey) idleT=setTimeout(lockNow,30*60*1000); }
+  ['keydown','pointerdown','input'].forEach(ev=>document.addEventListener(ev,bumpIdle,true));
+  window.addEventListener('pagehide',()=>{ if(saveT) saveNow(); });
   function getMeta(){ const m={}; FIELDS.forEach(k=>m[k]=$(k).value.trim()); return m; }
 
   // ---------- 편집기 → 줄 ----------
@@ -565,7 +677,7 @@
     save(); refresh();
   };
 
-  load(); refresh();
+  showLock();
 })();
 </script>
 </body>

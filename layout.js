@@ -10,6 +10,7 @@
   const COL_W = 26363;      // 단 너비
   const GAP = 2100;         // 문항 사이 빈 줄 (10pt 150% + 위아래 300)
   const SAFE = 1500;        // 한 단마다 남겨 두는 여유 (약 한 줄)
+  const MIN_SPLIT = 4500;   // 왼쪽 단 끝에서 오른쪽 단으로 이어 붙이려면 최소 이만큼(약 세 줄) 남아 있어야 함
   const END_H = 9500;       // 마지막 '- 끝 -'과 답안지 확인 상자
   // 문단 모양: 왼/오른 여백, 첫 줄(음수=내어쓰기), 위/아래 간격
   const PP = {
@@ -138,7 +139,14 @@
     const newCol = () => ({ units: [], used: 0, cap: COL_H - SAFE, carry: false });
     let col = { units: [], used: 0, cap: firstCap - SAFE, carry: false };
     const gapOf = () => (col.units.length || col.carry ? GAP : 0);
-    const fits = u => col.used + u.h + gapOf() <= col.cap;
+    // 같은 쪽 안(왼쪽 단 → 오른쪽 단)에서는 문항이 이어져도 됨 → 왼쪽 단은 오른쪽 단까지 이어 담기
+    // 단, 왼쪽 단에 남은 자리가 두세 줄도 안 되면 발문만 덩그러니 남으니 이어 붙이지 않음
+    const isLeft = () => cols.length % 2 === 0;
+    const fits = u => {
+      const need = col.used + u.h + gapOf();
+      if (need <= col.cap) return true;
+      return isLeft() && need <= col.cap + COL_H - SAFE && col.cap - col.used - gapOf() >= MIN_SPLIT;
+    };
     const pinAt = new Map(); const rem = [];
     units.forEach(u => { if (!keepOrder && u.pin) pinAt.set(u.idx, u); else rem.push(u); });
     let n = 0;
@@ -150,8 +158,10 @@
       if (!fits(u) && (col.units.length || col.carry)) { cols.push(col); col = newCol(); continue; }
       if (i >= 0) rem.splice(i, 1);
       col.used += u.h + gapOf(); col.units.push(u); n++;
-      if (col.used > col.cap) { // 한 단보다 긴 문항: 넘친 만큼 다음 단에 이어짐
-        const over = col.used - col.cap; u.tooTall = true;
+      if (col.used > col.cap) { // 넘친 만큼 다음 단에 이어짐
+        const over = col.used - col.cap, left = isLeft();
+        if (left) u.span = true;                          // 같은 쪽 오른쪽 단으로 이어짐 (괜찮음)
+        if (!left || over > COL_H - SAFE) u.tooTall = true; // 다음 쪽으로 넘어감
         cols.push(col); col = newCol(); col.used = over; col.carry = true;
       }
     }
@@ -214,7 +224,7 @@
     const last = cols[cols.length - 1];
     return {
       lines: out, cols: cols.length, pages: Math.ceil(cols.length / 2), moved,
-      tooTall: units.filter(u => u.tooTall).length, endFits: last.used + END_H <= last.cap + SAFE,
+      tooTall: units.filter(u => u.tooTall).length, spans: units.filter(u => u.span && !u.tooTall).length, endFits: last.used + END_H <= last.cap + SAFE,
       nObj: counts.nO, nSub: counts.nS, pins: units.filter(u => u.pin).length
     };
   }

@@ -50,6 +50,8 @@
   // 발문 줄인지 (직접 지정한 것 포함)
   function isQ(t) { const f = forcedOf(t); return f ? f === 'q' : RE_Q.test(t); }
   const RE_COLBREAK = /^\s*\[\s*다음\s*단\s*\]\s*$/;
+  // [묶기] ~ [/묶기]: 선생님이 정한 범위를 한 문제(덩어리)로 — 편집기에서만 쓰고 시험지에는 안 나옴
+  const RE_BIND = /^\s*\[\s*(\/?)\s*묶기\s*\]\s*$/;
   const RE_CHOICE = /^\s*[①②③④⑤]/;
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
   const RE_CLOSE = /^\s*[\[<]\s*\/\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
@@ -67,6 +69,7 @@
       if (cur) { cur.lines.push(runs); continue; }
       if (RE_COLBREAK.test(t)) { out.push({ type: 'colbreak' }); continue; }
       if (/^\s*\[\s*고정\s*\]\s*$/.test(t)) continue; // 📌 고정 표시 (편집기에서만)
+      if (RE_BIND.test(t)) continue; // 묶기 표시 (편집기에서만)
       const ty = !t.trim() ? 'blank' : force || (RE_ANSWER.test(t) ? 'answer' : RE_GROUP.test(t) ? 'group' : RE_Q.test(t) ? 'q' : RE_CHOICE.test(t) ? 'choice' : 'passage');
       if (ty === 'blank') out.push({ type: 'blank' });
       else if (ty === 'q') {
@@ -112,9 +115,9 @@
     return [h, font, sp, /<hh:bold\/>/.test(xml) ? 1 : 0, ul ? 1 : 0, /<hh:italic\/>/.test(xml) ? 1 : 0,
       /textColor="#000000"/.test(xml) ? 1 : 0, /<hh:ratio hangul="100"/.test(xml) ? 1 : 0, /<hh:offset hangul="0"/.test(xml) ? 1 : 0].join(',');
   };
-  // o: {h:1000|950, sp, b, u, i}
+  // o: {h:1000|950, sp, b, u, i, color:'C00000'(없으면 검정)}
   CharTable.prototype.get = function (o) {
-    const key = [o.h, 3, o.sp || 0, o.b ? 1 : 0, o.u ? 1 : 0, o.i ? 1 : 0, 1, 1, 1].join(',');
+    const key = [o.h, 3, o.sp || 0, o.b ? 1 : 0, o.u ? 1 : 0, o.i ? 1 : 0, o.color || 1, 1, 1].join(',');
     if (this.cache[key] != null) return this.cache[key];
     for (const c of this.list) if (this.sig(c.xml) === key && /borderFillIDRef="2"/.test(c.xml)) return (this.cache[key] = c.id);
     // 새로 만들기: 기본(id 2: 10pt 함초롬바탕)에서 바꿈
@@ -126,6 +129,7 @@
       .replace(/<hh:bold\/>|<hh:italic\/>/g, '');
     const deco = (o.i ? '<hh:italic/>' : '') + (o.b ? '<hh:bold/>' : '');
     x = x.replace(/<hh:underline type="\w+"/, deco + '<hh:underline type="' + (o.u ? 'BOTTOM' : 'NONE') + '"');
+    if (o.color) x = x.replace(/textColor="#[0-9A-Fa-f]{6}"/, 'textColor="#' + o.color + '"');
     this.list.push({ id, xml: x }); this.added.push(x);
     return (this.cache[key] = id);
   };
@@ -167,7 +171,7 @@
   }
   function runsXml(ct, runs, base) { // base: {h, sp, b}
     if (!runs.length) return '<hp:run charPrIDRef="' + ct.get(base) + '"/>';
-    return runs.map(r => '<hp:run charPrIDRef="' + ct.get({ h: base.h, sp: base.sp, b: base.b || r.b, u: r.u, i: r.i }) + '"><hp:t>' + textXml(r.t) + '</hp:t></hp:run>').join('');
+    return runs.map(r => '<hp:run charPrIDRef="' + ct.get({ h: base.h, sp: base.sp, b: base.b || r.b, u: r.u, i: r.i, color: base.color }) + '"><hp:t>' + textXml(r.t) + '</hp:t></hp:run>').join('');
   }
   // 앞부분(정규식에 맞는 부분)을 굵게
   function boldPrefix(runs, re) {
@@ -201,7 +205,7 @@
   // item: {k:'p', pp, style, base:'P'|'S'|'D', runs, head, tabCols, cb} | {k:'box', lines, title, cb}
   function planBlocks(blocks, opt) {
     opt = opt || {};
-    blocks = blocks.filter(b => b.type !== 'answer'); // 정답 줄은 시험지에 안 찍음
+    if (!opt.answers) blocks = blocks.filter(b => b.type !== 'answer'); // 정답 넣기를 끄면 정답 줄은 안 찍음
     const bl = []; let cb = false;
     blocks.forEach((b, k) => {
       if (b.type === 'colbreak') { cb = true; return; }
@@ -222,6 +226,10 @@
     for (let k = 0; k < bl.length; k++) {
       const b = bl[k], cb = !!b.cb;
       if (b.type === 'blank') items.push({ k: 'p', pp: 6, style: 0, base: 'P', runs: [], cb });
+      else if (b.type === 'answer') { // 정답 넣기를 켰을 때: 빨간 굵은 글씨, 선지처럼 들여씀
+        const runs = RE_ANSWER.test(textOf(b.runs)) ? b.runs : [{ t: '정답: ' }].concat(b.runs);
+        items.push({ k: 'p', pp: 51, style: 2, base: 'S', runs, color: 'C00000', cb });
+      }
       else if (b.type === 'group') items.push({ k: 'p', pp: 11, style: 1, base: 'S', runs: boldPrefix(b.runs, RE_GROUP), cb });
       else if (b.type === 'q') items.push({ k: 'p', pp: 11, style: 1, base: 'S', runs: boldPrefix(b.runs, RE_Q), cb });
       else if (b.type === 'choice') {
@@ -268,7 +276,7 @@
         xml += boxPara(ct, inner, it.title ? 282 + 1520 * (it.lines.length + 1) : 282 + 1430 * it.lines.length, it.cb);
         continue;
       }
-      const base = BASE[it.base];
+      const base = it.color ? Object.assign({}, BASE[it.base], { b: true, color: it.color }) : BASE[it.base];
       if (!it.runs.length && !it.head) { xml += para(it.pp, it.style, '<hp:run charPrIDRef="' + ct.get(base) + '"/>', it.cb); continue; }
       const pp = it.tabCols && opt.choiceTabs[it.tabCols] ? opt.choiceTabs[it.tabCols] : it.pp;
       const head = it.head ? '<hp:run charPrIDRef="' + ct.get({ h: 1000, sp: -3, b: true }) + '"><hp:t>' + esc(it.head) + '</hp:t></hp:run>' +
@@ -392,7 +400,7 @@
       else if (name === 'Contents/header.xml') z.file(name, header);
       else z.file(name, await fz.async('uint8array'), name === 'mimetype' ? { compression: 'STORE' } : {});
     }
-    const prv = blocks.filter(b => b.type !== 'answer').map(b => b.runs ? textOf(b.runs) : (b.lines || []).map(textOf).join('\n')).join('\n');
+    const prv = blocks.filter(b => opt.answers || b.type !== 'answer').map(b => b.runs ? textOf(b.runs) : (b.lines || []).map(textOf).join('\n')).join('\n');
     z.file('Preview/PrvText.txt', prv.slice(0, 1000));
     return z.generateAsync({ type: opt.type || 'uint8array', compression: 'DEFLATE', mimeType: 'application/hwp+zip' });
   }
@@ -411,6 +419,6 @@
     return { blocks: bl, nObj: cnt(false), nSub: cnt(true), ptsObj: sum(obj), ptsSub: sum(sub), noPts: qs.filter((q, i) => q.pts == null && !isParent(q, i)).length };
   }
 
-  const api = { build, classify, parseLine, stats, planBlocks, textOf, qInfo, isQ, forcedOf, stripForce, FORCE_CH, RE_FORCE, RE_ANSWER, RE_Q, RE_GROUP, RE_COLBREAK };
+  const api = { build, classify, parseLine, stats, planBlocks, textOf, qInfo, isQ, forcedOf, stripForce, FORCE_CH, RE_FORCE, RE_ANSWER, RE_BIND, RE_Q, RE_GROUP, RE_COLBREAK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ExamHwpx = api;
 })(typeof window !== 'undefined' ? window : globalThis);

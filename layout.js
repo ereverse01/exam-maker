@@ -70,7 +70,7 @@
     return n * PITCH[it.base] + pp[3] + pp[4];
   }
   function heightOf(lines) {
-    const items = H.planBlocks(H.classify(lines), { autoGap: true });
+    const items = H.planBlocks(H.classify(lines), { autoGap: true, answers: !!root.EXAM_ANSWERS });
     return items.reduce((s, it) => s + itemHeight(it), 0);
   }
 
@@ -79,7 +79,7 @@
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/, RE_CLOSE = /^\s*[\[<]\s*\/\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
   const RE_PIN = /^\s*\[\s*고정\s*\]\s*$/;
   function toUnits(lines) {
-    const pre = [], units = []; let cur = null, inside = false, groupLeft = 0, pinAt = -1;
+    const pre = [], units = []; let cur = null, inside = false, groupLeft = 0, pinAt = -1, bound = false, afterBind = false;
     const add = l => (cur ? cur.lines : pre).push(l);
     const start = (i, l, group) => {
       if (cur) cur.end = pinAt >= 0 ? pinAt : i;
@@ -88,6 +88,19 @@
     };
     lines.forEach((l, i) => {
       const t = plain(l);
+      // [묶기] ~ [/묶기]: 그 사이는 무엇이 있든 한 덩어리
+      const bm = t.match(H.RE_BIND);
+      if (bm) {
+        if (!bm[1]) { start(i, l, false); cur.bound = true; bound = true; groupLeft = 0; }
+        else { add(l); bound = false; afterBind = true; }
+        return;
+      }
+      if (bound) { if (!H.RE_COLBREAK.test(t)) add(l); return; } // 묶음 안의 옛 [다음 단]은 버림
+      if (afterBind && plain(l).trim() && !H.RE_COLBREAK.test(t) && !RE_PIN.test(t)) {
+        afterBind = false;
+        // 묶음 뒤에 바로 이어진 지문 등은 새 덩어리로 (발문·묶음 문항이면 아래에서 새로 시작됨)
+        if (!H.isQ(t) && !H.RE_GROUP.test(H.stripForce(t))) { start(i, l, false); cur.lastNum = null; return; }
+      }
       if (RE_OPEN.test(t)) { inside = true; add(l); return; }
       if (RE_CLOSE.test(t)) { inside = false; add(l); return; }
       if (inside) { add(l); return; }
@@ -153,9 +166,11 @@
     let nO = 0, nS = 0;
     for (const u of orderedUnits) {
       const labels = []; const parent = new Map(); // 원래 번호 → 새 번호 (1-1. 이 따라가게)
-      u.lines = u.lines.map(l => {
+      let gi = -1, gFrom = 0; // 묶음 머리 [a-b] 줄 위치, 그 뒤 첫 번호
+      u.lines = u.lines.map((l, li) => {
         const t = plain(l);
         const force = H.forcedOf(t), tt = H.stripForce(t);
+        if (!force && H.RE_GROUP.test(tt) && gi < 0) { gi = li; gFrom = labels.length; return l; }
         if (!H.isQ(t) || (!force && H.RE_GROUP.test(tt))) return l;
         const qi = H.qInfo(tt);
         if (!qi) return l; // 번호 없는 발문(직접 지정)은 그대로
@@ -168,8 +183,8 @@
         }
         return l.replace(RE_QNUM, (m, lead) => lead + lab + '.');
       });
-      if (u.group && labels.length) {
-        u.lines[0] = u.lines[0].replace(RE_GNUM, (m, lead) => lead + '[' + labels[0] + '-' + labels[labels.length - 1] + ']');
+      if (gi >= 0 && labels.length > gFrom) {
+        u.lines[gi] = u.lines[gi].replace(RE_GNUM, (m, lead) => lead + '[' + labels[gFrom] + '-' + labels[labels.length - 1] + ']');
       }
     }
     return { nO, nS };

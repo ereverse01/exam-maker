@@ -49,7 +49,8 @@
     el.className = 'pv-p';
     el.style.cssText = 'margin-left:' + px(pp[0]) + ';margin-right:' + px(pp[1]) + ';padding-left:' + px(hang) +
       ';text-indent:' + px(pp[2]) + ';padding-top:' + px(pp[3]) + ';padding-bottom:' + px(pp[4]) +
-      ';font-size:' + px(fh) + ';line-height:' + px(pitch) + ';letter-spacing:' + ls + 'em;';
+      ';font-size:' + px(fh) + ';line-height:' + px(pitch) + ';letter-spacing:' + ls + 'em;' +
+      (it.color ? 'color:#' + it.color + ';font-weight:700;' : '');
     if (!it.runs.length && !it.head) { el.innerHTML = '&nbsp;'; }
     else {
       let html = it.head ? '<b>' + esc(it.head) + '</b>　　　' : '';
@@ -81,7 +82,7 @@
   // container 안에 쪽들을 그림. 돌려주는 값: 쪽 수
   function render(container, meta, lines) {
     container.innerHTML = '';
-    const items = H.planBlocks(H.classify(lines), { autoGap: true });
+    const items = H.planBlocks(H.classify(lines), { autoGap: true, answers: !!root.EXAM_ANSWERS });
     const pages = []; const cols = [];
     const flowW = COL_W * (root.EXAM_WF || L.WF) * PX; // 쪽 맞춤 계산과 같은 폭 (한글이 조금 일찍 줄을 바꿈)
     function newPage() {

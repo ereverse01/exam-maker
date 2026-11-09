@@ -39,6 +39,16 @@
     const m = t.match(/^\s*(서답형\s*|서술형\s*|서\s*)?(\d+)(?:\s*[-‐–－]\s*(\d+))?\s*\./);
     return m ? { pre: !!m[1], num: +m[2], part: m[3] != null ? +m[3] : null } : null;
   }
+  // 줄 종류 직접 지정: 줄 맨 앞의 보이지 않는 글자 (편집기에서 고름)
+  const FORCE = { '\u2061': 'q', '\u2062': 'passage', '\u2064': 'choice', '\u2060': 'answer' };
+  const FORCE_CH = { q: '\u2061', passage: '\u2062', choice: '\u2064', answer: '\u2060' };
+  const RE_FORCE = /[\u2060\u2061\u2062\u2064]/g;
+  const forcedOf = s => { const m = String(s).match(/[\u2060\u2061\u2062\u2064]/); return m ? FORCE[m[0]] : null; };
+  // 정답 줄: '정답: ③' / '[정답] ③' — 문항에 붙어 다니지만 한글 파일·미리보기에는 안 나옴
+  const RE_ANSWER = /^\s*(\[\s*정답\s*\]|정답\s*[:：])/;
+  const stripForce = s => String(s).replace(RE_FORCE, '');
+  // 발문 줄인지 (직접 지정한 것 포함)
+  function isQ(t) { const f = forcedOf(t); return f ? f === 'q' : RE_Q.test(t); }
   const RE_COLBREAK = /^\s*\[\s*다음\s*단\s*\]\s*$/;
   const RE_CHOICE = /^\s*[①②③④⑤]/;
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
@@ -48,26 +58,26 @@
   function classify(lineHtmls) {
     const out = []; let cur = null; // cur: 열린 박스/보기/대화
     let lastQ = null; // 1-1. 처럼 딸린 문항은 앞 문항(1. / 서1.)의 서답형 여부를 이어받음
-    for (const h of lineHtmls) {
-      const runs = parseLine(h); const t = textOf(runs);
+    for (const h0 of lineHtmls) {
+      const force = forcedOf(h0);
+      const runs = parseLine(stripForce(h0)); const t = textOf(runs);
       let m;
       if ((m = t.match(RE_OPEN))) { cur = { type: BLOCK_KIND[m[1]], lines: [] }; out.push(cur); continue; }
       if (RE_CLOSE.test(t)) { cur = null; continue; }
       if (cur) { cur.lines.push(runs); continue; }
       if (RE_COLBREAK.test(t)) { out.push({ type: 'colbreak' }); continue; }
       if (/^\s*\[\s*고정\s*\]\s*$/.test(t)) continue; // 📌 고정 표시 (편집기에서만)
-      if (!t.trim()) out.push({ type: 'blank' });
-      else if (RE_GROUP.test(t)) out.push({ type: 'group', runs });
-      else if (RE_Q.test(t)) {
-        const qi = qInfo(t);
-        let sub = qi.pre;
-        if (!sub && qi.part != null && lastQ && lastQ.num === qi.num) sub = lastQ.sub;
+      const ty = !t.trim() ? 'blank' : force || (RE_ANSWER.test(t) ? 'answer' : RE_GROUP.test(t) ? 'group' : RE_Q.test(t) ? 'q' : RE_CHOICE.test(t) ? 'choice' : 'passage');
+      if (ty === 'blank') out.push({ type: 'blank' });
+      else if (ty === 'q') {
+        const qi = qInfo(t); // 직접 발문으로 지정한 줄은 번호가 없을 수도 있음
+        let sub = qi ? qi.pre : /^\s*서/.test(t);
+        if (qi && !sub && qi.part != null && lastQ && lastQ.num === qi.num) sub = lastQ.sub;
         const pm = t.match(/\[\s*(\d+(?:\.\d+)?)\s*점/);
-        lastQ = { type: 'q', runs, sub, pts: pm ? +pm[1] : null, num: qi.num, part: qi.part };
+        lastQ = { type: 'q', runs, sub, pts: pm ? +pm[1] : null, num: qi ? qi.num : null, part: qi ? qi.part : null, forced: !!force };
         out.push(lastQ);
       }
-      else if (RE_CHOICE.test(t)) out.push({ type: 'choice', runs });
-      else out.push({ type: 'passage', runs });
+      else out.push({ type: ty, runs, forced: !!force });
     }
     return out;
   }
@@ -191,6 +201,7 @@
   // item: {k:'p', pp, style, base:'P'|'S'|'D', runs, head, tabCols, cb} | {k:'box', lines, title, cb}
   function planBlocks(blocks, opt) {
     opt = opt || {};
+    blocks = blocks.filter(b => b.type !== 'answer'); // 정답 줄은 시험지에 안 찍음
     const bl = []; let cb = false;
     blocks.forEach((b, k) => {
       if (b.type === 'colbreak') { cb = true; return; }
@@ -381,14 +392,15 @@
       else if (name === 'Contents/header.xml') z.file(name, header);
       else z.file(name, await fz.async('uint8array'), name === 'mimetype' ? { compression: 'STORE' } : {});
     }
-    const prv = blocks.map(b => b.runs ? textOf(b.runs) : (b.lines || []).map(textOf).join('\n')).join('\n');
+    const prv = blocks.filter(b => b.type !== 'answer').map(b => b.runs ? textOf(b.runs) : (b.lines || []).map(textOf).join('\n')).join('\n');
     z.file('Preview/PrvText.txt', prv.slice(0, 1000));
     return z.generateAsync({ type: opt.type || 'uint8array', compression: 'DEFLATE', mimeType: 'application/hwp+zip' });
   }
 
   function stats(lineHtmls) {
     const bl = classify(lineHtmls);
-    const qs = bl.filter(b => b.type === 'q');
+    // 직접 발문으로 지정했지만 번호도 배점도 없는 줄(예: 안내 문장)은 문항으로 세지 않음
+    const qs = bl.filter(b => b.type === 'q' && (b.num != null || b.pts != null));
     // 1-1. 1-2. 처럼 딸린 문항은 앞 번호(1)와 한 문항으로 셈 (배점은 모두 더함)
     // 배점 없는 1. 바로 뒤에 1-1. 이 이어지면 1. 은 묶음 발문이라 배점이 없어도 됨
     const head = qs.map((q, i) => !(q.part != null && i > 0 && qs[i - 1].num === q.num && qs[i - 1].sub === q.sub));
@@ -399,6 +411,6 @@
     return { blocks: bl, nObj: cnt(false), nSub: cnt(true), ptsObj: sum(obj), ptsSub: sum(sub), noPts: qs.filter((q, i) => q.pts == null && !isParent(q, i)).length };
   }
 
-  const api = { build, classify, parseLine, stats, planBlocks, textOf, qInfo, RE_Q, RE_GROUP, RE_COLBREAK };
+  const api = { build, classify, parseLine, stats, planBlocks, textOf, qInfo, isQ, forcedOf, stripForce, FORCE_CH, RE_FORCE, RE_ANSWER, RE_Q, RE_GROUP, RE_COLBREAK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ExamHwpx = api;
 })(typeof window !== 'undefined' ? window : globalThis);

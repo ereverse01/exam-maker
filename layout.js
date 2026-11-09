@@ -93,14 +93,15 @@
       if (inside) { add(l); return; }
       if (H.RE_COLBREAK.test(t)) return;
       if (RE_PIN.test(t)) { pinAt = i; return; }
-      if (!t.trim()) { if (cur) cur.lines.push(''); else if (pre.length) pre.push(''); return; }
-      if (H.RE_GROUP.test(t)) {
-        const m = t.match(/\[\s*(?:서\s*)?(\d+)\s*[-~～]\s*(?:서\s*)?(\d+)\s*\]/);
+      const force = H.forcedOf(t), tt = H.stripForce(t);
+      if (!tt.trim()) { if (cur) cur.lines.push(''); else if (pre.length) pre.push(''); return; }
+      if (!force && H.RE_GROUP.test(tt)) {
+        const m = tt.match(/\[\s*(?:서\s*)?(\d+)\s*[-~～]\s*(?:서\s*)?(\d+)\s*\]/);
         groupLeft = m ? Math.max(1, +m[2] - +m[1] + 1) : 1;
         start(i, l, true); return;
       }
-      if (H.RE_Q.test(t)) {
-        const qi = H.qInfo(t);
+      if (H.isQ(t)) {
+        const qi = H.qInfo(tt) || { num: null, part: null }; // 직접 지정한 발문은 번호가 없을 수 있음
         // 1-1. 1-2. 는 앞 문항(1. 또는 1-1.)과 한 덩어리
         if (qi.part != null && cur && cur.lastNum === qi.num) { cur.lines.push(l); pinAt = -1; return; }
         if (cur && cur.group && groupLeft > 0) { groupLeft--; cur.lines.push(l); cur.lastNum = qi.num; pinAt = -1; return; }
@@ -146,7 +147,7 @@
   }
 
   // ---------- 번호 다시 매기기 ----------
-  const RE_QNUM = /^((?:\s|<[^>]+>)*)(?:서답형\s*|서술형\s*|서\s*)?\d+(?:\s*[-‐–－]\s*\d+)?\s*\./;
+  const RE_QNUM = /^((?:\s|<[^>]+>|[\u2060\u2061\u2062\u2064])*)(?:서답형\s*|서술형\s*|서\s*)?\d+(?:\s*[-‐–－]\s*\d+)?\s*\./;
   const RE_GNUM = /^((?:\s|<[^>]+>)*)\[\s*[^\]]*?\d+\s*[-~～]\s*[^\]]*?\d+\s*\]/;
   function renumber(orderedUnits) {
     let nO = 0, nS = 0;
@@ -154,8 +155,10 @@
       const labels = []; const parent = new Map(); // 원래 번호 → 새 번호 (1-1. 이 따라가게)
       u.lines = u.lines.map(l => {
         const t = plain(l);
-        if (!H.RE_Q.test(t) || H.RE_GROUP.test(t)) return l;
-        const qi = H.qInfo(t);
+        const force = H.forcedOf(t), tt = H.stripForce(t);
+        if (!H.isQ(t) || (!force && H.RE_GROUP.test(tt))) return l;
+        const qi = H.qInfo(tt);
+        if (!qi) return l; // 번호 없는 발문(직접 지정)은 그대로
         let lab;
         if (qi.part != null && parent.has(qi.num)) lab = parent.get(qi.num) + '-' + qi.part;
         else {

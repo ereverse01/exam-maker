@@ -10,7 +10,7 @@
   const COL_W = 26363;      // 단 너비
   const GAP = 2100;         // 문항 사이 빈 줄 (10pt 150% + 위아래 300)
   const SAFE = 1500;        // 한 단마다 남겨 두는 여유 (약 한 줄)
-  const MIN_SPLIT = 4500;   // 왼쪽 단 끝에서 오른쪽 단으로 이어 붙이려면 최소 이만큼(약 세 줄) 남아 있어야 함
+  const MIN_SPLIT = 3000;   // 왼쪽 단 끝에서 오른쪽 단으로 이어 붙이려면 최소 이만큼(약 두 줄) 남아 있어야 함
   const END_H = 9500;       // 마지막 '- 끝 -'과 답안지 확인 상자
   // 문단 모양: 왼/오른 여백, 첫 줄(음수=내어쓰기), 위/아래 간격
   const PP = {
@@ -154,7 +154,12 @@
       let u, i = -1;
       if (pinAt.has(n)) u = pinAt.get(n);
       else if (keepOrder) { i = 0; u = rem[0]; }
-      else { i = rem.findIndex(fits); if (i < 0) i = 0; u = rem[i]; }
+      else {
+        // 서답형은 객관식이 다 놓인 뒤에만 (빈자리 채우기로 객관식 앞에 끼어들지 않게)
+        const objLeft = rem.some(v => !v.sub);
+        const ok = v => !v.sub || !objLeft;
+        i = rem.findIndex(v => ok(v) && fits(v)); if (i < 0) i = rem.findIndex(ok); u = rem[i];
+      }
       if (!fits(u) && (col.units.length || col.carry)) { cols.push(col); col = newCol(); continue; }
       if (i >= 0) rem.splice(i, 1);
       col.used += u.h + gapOf(); col.units.push(u); n++;
@@ -206,7 +211,11 @@
     const { pre, units } = toUnits(lines);
     if (!units.length) return null;
     const preH = pre.length ? heightOf(pre) : 0;
-    for (const u of units) u.h = opt.heights ? opt.heights[u.idx] : heightOf(u.lines);
+    for (const u of units) {
+      u.h = opt.heights ? opt.heights[u.idx] : heightOf(u.lines);
+      const q = u.lines.map(l => H.stripForce(plain(l))).find(t => H.qInfo(t));
+      u.sub = !!(q && H.qInfo(q).pre);
+    }
     const cols = pack(units, COL_H - FIRST_TOP - preH - (pre.length ? GAP : 0), !!opt.keepOrder);
     const order = [].concat(...cols.map(c => c.units));
     const counts = renumber(order);

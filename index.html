@@ -47,7 +47,9 @@
   .summary b{color:var(--accent)}
   .warn{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:6px 10px;font-size:13px}
   .okmsg{color:var(--ok);font-size:13px}
-  .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+  .toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 -18px 10px;padding:8px 18px;
+    position:sticky;top:var(--hh,60px);z-index:4;background:var(--card);transition:box-shadow .15s}
+  .toolbar.stuck{box-shadow:0 4px 10px -6px rgba(0,0,0,.25);border-bottom:1px solid var(--line)}
   .ed-handles{position:absolute;inset:0;pointer-events:none;z-index:2}
   .uh{position:absolute;left:4px;display:flex;gap:2px;pointer-events:auto;transform:translateY(1px)}
   .uh button{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;font-size:15px;line-height:1;padding:5px 7px;min-width:30px;cursor:pointer}
@@ -215,7 +217,7 @@
       <button class="btn" data-cmd="removeFormat">서식 지우기</button>
       <span class="sep"></span>
       <button class="btn" id="btnAnswer" title="커서가 있는 문항 끝에 '정답:' 줄을 넣습니다. 문항과 함께 옮겨 다니고 한글 파일에는 안 나와요">✔ 정답 칸</button>
-      <button class="btn" id="btnChars" title="ⓐⓑⓒ, ①②③ 같은 특수 문자를 커서 자리에 넣습니다">Ω 문자표</button>
+      <button class="btn" id="btnChars" title="ⓐⓑⓒ, ①②③ 같은 특수 문자를 커서 자리에 넣습니다 (Ctrl+F10)">Ω 문자표</button>
       <button class="btn" id="btnType" title="커서가 있는 줄(또는 고른 줄들)을 발문·지문·선지 중 직접 정합니다. 줄 왼쪽의 회색 이름을 눌러도 됩니다">🏷 줄 종류</button>
       <span class="sep"></span>
       <button class="btn" data-wrap="박스">▭ 박스</button>
@@ -935,14 +937,37 @@
     ed.focus();
     document.execCommand('insertText',false,b.dataset.c);
   });
-  $('btnChars').addEventListener('mousedown',e=>{
-    e.preventDefault();
+  // 문자표 열기/닫기. x,y = 패널 왼쪽 위 기준점
+  function toggleChars(x,y){
     if(!charPanel.innerHTML) buildChars();
     if(!charPanel.hidden){ charPanel.hidden=true; return; }
     charPanel.hidden=false;
-    const r=e.currentTarget.getBoundingClientRect(), pr=charPanel.getBoundingClientRect();
-    charPanel.style.left=Math.max(8,Math.min(r.left,innerWidth-pr.width-8))+'px';
-    charPanel.style.top=Math.max(8,Math.min(r.bottom+4,innerHeight-pr.height-8))+'px';
+    const pr=charPanel.getBoundingClientRect();
+    charPanel.style.left=Math.max(8,Math.min(x,innerWidth-pr.width-8))+'px';
+    charPanel.style.top=Math.max(8,Math.min(y,innerHeight-pr.height-8))+'px';
+  }
+  $('btnChars').addEventListener('mousedown',e=>{
+    e.preventDefault();
+    const r=e.currentTarget.getBoundingClientRect(); toggleChars(r.left, r.bottom+4);
+  });
+  // 도구 모음: 스크롤해도 머리 줄 바로 아래에 붙어 있게 (머리 줄 높이는 화면 폭에 따라 바뀜)
+  const tb=document.querySelector('.toolbar'), hdr=document.querySelector('header');
+  function stickTb(){
+    const hh=hdr.offsetHeight; document.documentElement.style.setProperty('--hh',hh+'px');
+    tb.classList.toggle('stuck', tb.getBoundingClientRect().top<=hh+1 && ed.getBoundingClientRect().top<hh+tb.offsetHeight);
+  }
+  addEventListener('resize',stickTb); addEventListener('scroll',stickTb,{passive:true}); stickTb();
+  // Ctrl+F10: 한글처럼 문자표 (커서 바로 아래에 열림)
+  document.addEventListener('keydown',e=>{
+    if(!(e.ctrlKey && e.key==='F10') || document.body.classList.contains('locked') || !$('pv').hidden) return;
+    e.preventDefault();
+    let x=innerWidth/2-215, y=120;
+    const s=getSelection();
+    if(s.rangeCount && ed.contains(s.anchorNode)){
+      const rr=s.getRangeAt(0).getClientRects()[0] || lineOfNode(s.anchorNode)?.getBoundingClientRect();
+      if(rr){ x=rr.left; y=rr.bottom+6; }
+    }
+    toggleChars(x,y);
   });
   document.addEventListener('mousedown',e=>{ if(!tyMenu.hidden && !tyMenu.contains(e.target)) tyMenu.hidden=true; },true);
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ tyMenu.hidden=true; charPanel.hidden=true; } });

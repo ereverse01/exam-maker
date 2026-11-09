@@ -100,9 +100,12 @@
         start(i, l, true); return;
       }
       if (H.RE_Q.test(t)) {
-        if (cur && cur.group && groupLeft > 0) { groupLeft--; cur.lines.push(l); pinAt = -1; return; }
+        const qi = H.qInfo(t);
+        // 1-1. 1-2. 는 앞 문항(1. 또는 1-1.)과 한 덩어리
+        if (qi.part != null && cur && cur.lastNum === qi.num) { cur.lines.push(l); pinAt = -1; return; }
+        if (cur && cur.group && groupLeft > 0) { groupLeft--; cur.lines.push(l); cur.lastNum = qi.num; pinAt = -1; return; }
         groupLeft = 0;
-        start(i, l, false); return;
+        start(i, l, false); cur.lastNum = qi.num; return;
       }
       pinAt = -1;
       add(l);
@@ -143,18 +146,23 @@
   }
 
   // ---------- 번호 다시 매기기 ----------
-  const RE_QNUM = /^((?:\s|<[^>]+>)*)(?:서답형\s*|서술형\s*|서\s*)?\d+\s*\./;
+  const RE_QNUM = /^((?:\s|<[^>]+>)*)(?:서답형\s*|서술형\s*|서\s*)?\d+(?:\s*[-‐–－]\s*\d+)?\s*\./;
   const RE_GNUM = /^((?:\s|<[^>]+>)*)\[\s*[^\]]*?\d+\s*[-~～]\s*[^\]]*?\d+\s*\]/;
   function renumber(orderedUnits) {
     let nO = 0, nS = 0;
     for (const u of orderedUnits) {
-      const labels = [];
+      const labels = []; const parent = new Map(); // 원래 번호 → 새 번호 (1-1. 이 따라가게)
       u.lines = u.lines.map(l => {
         const t = plain(l);
         if (!H.RE_Q.test(t) || H.RE_GROUP.test(t)) return l;
-        const sub = /^\s*서/.test(t);
-        const lab = sub ? '서' + (++nS) : String(++nO);
-        labels.push(lab);
+        const qi = H.qInfo(t);
+        let lab;
+        if (qi.part != null && parent.has(qi.num)) lab = parent.get(qi.num) + '-' + qi.part;
+        else {
+          const base = qi.pre ? '서' + (++nS) : String(++nO);
+          parent.set(qi.num, base); labels.push(base);
+          lab = qi.part != null ? base + '-' + qi.part : base;
+        }
         return l.replace(RE_QNUM, (m, lead) => lead + lab + '.');
       });
       if (u.group && labels.length) {
@@ -193,5 +201,5 @@
     };
   }
 
-  root.ExamLayout = { arrange, heightOf, toUnits, lineCount, itemHeight, COL_W, RE_PIN };
+  root.ExamLayout = { arrange, heightOf, toUnits, lineCount, itemHeight, COL_W, COL_H, FIRST_TOP, END_H, WF, PP, FONT, PITCH, RE_PIN };
 })(typeof window !== 'undefined' ? window : globalThis);

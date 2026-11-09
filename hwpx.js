@@ -33,7 +33,12 @@
 
   // ---------- 줄 → 블록 분류 ----------
   const RE_GROUP = /^\s*\[\s*(서\s*)?\d+\s*[-~～]\s*(서\s*)?\d+\s*\]/;
-  const RE_Q = /^\s*(서답형\s*|서술형\s*|서\s*)?\d+\s*\.(\s|$)/;
+  const RE_Q = /^\s*(서답형\s*|서술형\s*|서\s*)?\d+(\s*[-‐–－]\s*\d+)?\s*\.(\s|$)/;
+  // 발문 번호 읽기: '서1-2.' → {pre:true, num:1, part:2}, '3.' → {pre:false, num:3, part:null}
+  function qInfo(t) {
+    const m = t.match(/^\s*(서답형\s*|서술형\s*|서\s*)?(\d+)(?:\s*[-‐–－]\s*(\d+))?\s*\./);
+    return m ? { pre: !!m[1], num: +m[2], part: m[3] != null ? +m[3] : null } : null;
+  }
   const RE_COLBREAK = /^\s*\[\s*다음\s*단\s*\]\s*$/;
   const RE_CHOICE = /^\s*[①②③④⑤]/;
   const RE_OPEN = /^\s*[\[<]\s*(박스|상자|보기|대화)\s*[\]>]\s*$/;
@@ -42,6 +47,7 @@
 
   function classify(lineHtmls) {
     const out = []; let cur = null; // cur: 열린 박스/보기/대화
+    let lastQ = null; // 1-1. 처럼 딸린 문항은 앞 문항(1. / 서1.)의 서답형 여부를 이어받음
     for (const h of lineHtmls) {
       const runs = parseLine(h); const t = textOf(runs);
       let m;
@@ -53,9 +59,12 @@
       if (!t.trim()) out.push({ type: 'blank' });
       else if (RE_GROUP.test(t)) out.push({ type: 'group', runs });
       else if (RE_Q.test(t)) {
-        const sub = /^\s*서/.test(t);
+        const qi = qInfo(t);
+        let sub = qi.pre;
+        if (!sub && qi.part != null && lastQ && lastQ.num === qi.num) sub = lastQ.sub;
         const pm = t.match(/\[\s*(\d+(?:\.\d+)?)\s*점/);
-        out.push({ type: 'q', runs, sub, pts: pm ? +pm[1] : null, num: +(t.match(/(\d+)\s*\./) || [0, 0])[1] });
+        lastQ = { type: 'q', runs, sub, pts: pm ? +pm[1] : null, num: qi.num, part: qi.part };
+        out.push(lastQ);
       }
       else if (RE_CHOICE.test(t)) out.push({ type: 'choice', runs });
       else out.push({ type: 'passage', runs });
@@ -380,11 +389,16 @@
   function stats(lineHtmls) {
     const bl = classify(lineHtmls);
     const qs = bl.filter(b => b.type === 'q');
+    // 1-1. 1-2. 처럼 딸린 문항은 앞 번호(1)와 한 문항으로 셈 (배점은 모두 더함)
+    // 배점 없는 1. 바로 뒤에 1-1. 이 이어지면 1. 은 묶음 발문이라 배점이 없어도 됨
+    const head = qs.map((q, i) => !(q.part != null && i > 0 && qs[i - 1].num === q.num && qs[i - 1].sub === q.sub));
+    const isParent = (q, i) => q.part == null && qs[i + 1] && qs[i + 1].part != null && qs[i + 1].num === q.num;
     const obj = qs.filter(q => !q.sub), sub = qs.filter(q => q.sub);
     const sum = a => Math.round(a.reduce((s, q) => s + (q.pts || 0), 0) * 100) / 100;
-    return { blocks: bl, nObj: obj.length, nSub: sub.length, ptsObj: sum(obj), ptsSub: sum(sub), noPts: qs.filter(q => q.pts == null).length };
+    const cnt = isSub => qs.filter((q, i) => head[i] && q.sub === isSub).length;
+    return { blocks: bl, nObj: cnt(false), nSub: cnt(true), ptsObj: sum(obj), ptsSub: sum(sub), noPts: qs.filter((q, i) => q.pts == null && !isParent(q, i)).length };
   }
 
-  const api = { build, classify, parseLine, stats, planBlocks, textOf, RE_Q, RE_GROUP, RE_COLBREAK };
+  const api = { build, classify, parseLine, stats, planBlocks, textOf, qInfo, RE_Q, RE_GROUP, RE_COLBREAK };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ExamHwpx = api;
 })(typeof window !== 'undefined' ? window : globalThis);

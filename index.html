@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>시험지 편집기</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="template.js?v=20261109b"></script>
-<script src="hwpx.js?v=20261109b"></script>
-<script src="layout.js?v=20261109b"></script>
-<script src="preview.js?v=20261109b"></script>
+<script src="template.js?v=20261115a"></script>
+<script src="hwpx.js?v=20261115a"></script>
+<script src="layout.js?v=20261115a"></script>
+<script src="preview.js?v=20261115a"></script>
 <style>
   :root{
     --bg:#f4f5f7; --card:#fff; --ink:#1d2330; --sub:#5d6575; --line:#dde1e8; --accent:#2f5bd3; --accent-soft:#e8eefc;
@@ -132,6 +132,16 @@
   .lock .link{background:none;border:0;color:var(--sub);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer}
   .lock .link[hidden]{display:none}
   body.locked > header, body.locked > main{visibility:hidden}
+  .fdlg{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);padding:0;width:min(380px,calc(100% - 32px))}
+  .fdlg::backdrop{background:rgba(0,0,0,.35)}
+  .fdlg form{padding:22px 22px 18px;display:grid;gap:10px}
+  .fdlg h2{margin:0;font-size:18px}
+  .fdlg p{margin:0;color:var(--sub);font-size:13.5px;line-height:1.55}
+  .fdlg input{font:inherit;font-size:16px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%}
+  .fdlg input[hidden]{display:none}
+  .fdlg input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  .fdlg .err{color:#dc2626;font-size:13.5px;min-height:1.2em}
+  .fd-btns{display:flex;justify-content:flex-end;gap:8px}
   /* ---------- 미리보기 ---------- */
   .pv{position:fixed;inset:0;z-index:30;background:color-mix(in srgb,var(--bg) 88%,#000);display:flex;flex-direction:column}
   .pv[hidden]{display:none}
@@ -187,6 +197,9 @@
   <button class="btn" id="btnLock" title="자리를 비울 때 (30분 동안 손대지 않으면 저절로 잠겨요)">🔒 잠그기</button>
   <button class="btn" id="btnSample">예시 넣기</button>
   <button class="btn" id="btnClear">새 시험지</button>
+  <button class="btn" id="btnExport" title="지금 작업(시험 정보·문제·정답)을 비밀번호로 잠근 파일로 받아 둡니다. 다른 컴퓨터에서 불러와 이어서 쓸 수 있어요">💾 파일 저장</button>
+  <button class="btn" id="btnImport" title="'작업 파일 저장'으로 받아 둔 파일을 열어 이어서 작업합니다">📂 불러오기</button>
+  <input type="file" id="fileIn" accept=".json,application/json" hidden>
   <button class="btn" id="btnPreview" title="한글 파일이 어떻게 나올지 쪽 모양으로 봅니다">👁 미리보기</button>
   <button class="btn primary" id="btnMake">한글 파일 만들기</button>
 </header>
@@ -260,12 +273,22 @@
   </section>
 
   <div class="foot">
-    <span class="note">입력 내용은 이 기기 브라우저에 자동 저장됩니다.</span>
+    <span class="note">입력 내용은 이 기기 브라우저에 자동 저장됩니다. 다른 컴퓨터로 옮기려면 위의 💾 파일 저장 → 그 컴퓨터에서 📂 불러오기.</span>
     <label class="anstog" title="켜면 정답 줄이 빨간 굵은 글씨로 시험지(한글 파일·미리보기)에 들어가요"><input type="checkbox" class="optAns"> 정답도 시험지에 넣기</label>
     <button class="btn" id="btnPreview2">👁 미리보기</button>
     <button class="btn primary" id="btnMake2">한글 파일 만들기 (.hwpx)</button>
   </div>
 </main>
+<dialog class="fdlg" id="fileDlg">
+  <form method="dialog" id="fileForm">
+    <h2 id="fdTitle">💾 작업 파일 저장</h2>
+    <p id="fdMsg"></p>
+    <input type="password" id="fdPw1" autocomplete="new-password" placeholder="파일 비밀번호">
+    <input type="password" id="fdPw2" autocomplete="new-password" placeholder="한 번 더 입력">
+    <div class="err" id="fdErr"></div>
+    <div class="fd-btns"><button class="btn" type="button" id="fdCancel">취소</button><button class="btn primary" type="submit" id="fdGo">저장</button></div>
+  </form>
+</dialog>
 <div class="toast" id="toast"></div>
 <div class="tymenu" id="tyMenu" hidden></div>
 <div class="chars" id="charPanel" hidden></div>
@@ -386,6 +409,7 @@
     ed.innerHTML=''; FIELDS.forEach(k=>{ $(k).value=''; });
     $('pv').hidden=true; $('pvPages').innerHTML=''; document.body.style.overflow='';
     clearUndo(); $('tyMenu').hidden=true; $('charPanel').hidden=true;
+    if($('fileDlg').open) $('fdCancel').click();
     showLock();
   }
   $('btnLock').onclick=lockNow;
@@ -625,6 +649,89 @@
     finally{ btns.forEach(b=>b.disabled=false); }
   }
   $('btnMake').onclick=make; $('btnMake2').onclick=make;
+
+  // ---------- 작업 파일 저장·불러오기 (다른 컴퓨터로 옮기기) ----------
+  // 파일 안의 내용은 그때 정한 파일 비밀번호로 AES-GCM 암호화. 비밀번호 없이는 열 수 없음.
+  const FILE_APP='exam-maker-work';
+  function askPw(mode,fileName){
+    return new Promise(res=>{
+      const dlg=$('fileDlg'), p1=$('fdPw1'), p2=$('fdPw2'), err=$('fdErr');
+      const exp=mode==='export';
+      $('fdTitle').textContent=exp?'💾 작업 파일 저장':'📂 작업 파일 불러오기';
+      $('fdMsg').textContent=exp
+        ? '이 파일을 열 때 쓸 비밀번호를 정하세요 (4자 이상). 다른 컴퓨터에서 불러올 때 이 비밀번호가 필요해요. 잠금 비밀번호와 같아도 됩니다.'
+        : '「'+fileName+'」을 저장할 때 정한 파일 비밀번호를 입력하세요. 지금 화면의 내용은 이 파일 내용으로 바뀝니다 (↶ 되돌리기로 되돌릴 수 있어요).';
+      p2.hidden=!exp; $('fdGo').textContent=exp?'저장':'불러오기';
+      p1.value=''; p2.value=''; err.textContent='';
+      const done=v=>{ $('fileForm').onsubmit=null; $('fdCancel').onclick=null; dlg.oncancel=null; if(dlg.open) dlg.close(); p1.value=''; p2.value=''; res(v); };
+      $('fileForm').onsubmit=e=>{
+        e.preventDefault();
+        const pw=p1.value;
+        if(pw.length<4){ err.textContent='4자 이상으로 입력해 주세요'; return; }
+        if(exp && pw!==p2.value){ err.textContent='두 비밀번호가 달라요'; return; }
+        done(pw);
+      };
+      $('fdCancel').onclick=()=>done(null);
+      dlg.oncancel=e=>{ e.preventDefault(); done(null); };
+      dlg.showModal(); setTimeout(()=>p1.focus(),30);
+    });
+  }
+  async function exportWork(){
+    if(!cKey) return;
+    if(document.activeElement===ed) normalize(false);
+    const pw=await askPw('export'); if(!pw) return;
+    try{
+      const sl=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+      const k=await deriveKey(pw,sl);
+      const data={meta:getMeta(),html:ed.innerHTML,savedAt:new Date().toISOString()};
+      const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},k,enc.encode(JSON.stringify(data)));
+      const file={app:FILE_APP,v:1,salt:b64(sl),iv:b64(iv),ct:b64(ct)};
+      const m=data.meta, now=new Date();
+      const stamp=(now.getMonth()+1)+'월'+now.getDate()+'일 '+String(now.getHours()).padStart(2,'0')+'시'+String(now.getMinutes()).padStart(2,'0')+'분';
+      const name=('시험지 작업 - '+m.grade+'학년 '+m.sem+'학기 '+m.kind+(m.subject?' '+m.subject:'')+' ('+stamp+').json').replace(/[\\/:*?"<>|]/g,'');
+      const blob=new Blob([JSON.stringify(file)],{type:'application/json'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      toast('다운로드 폴더에 저장했어요: '+name,4000);
+    }catch(err){ console.error(err); toast('저장 실패: '+err.message); }
+  }
+  // 불러온 HTML에서 스크립트·이벤트 속성 등 위험한 것 제거
+  function cleanHtml(html){
+    const t=document.createElement('template'); t.innerHTML=String(html||'');
+    t.content.querySelectorAll('script,style,iframe,object,embed,link,meta,form,input,button,textarea,select,svg,math,img,video,audio,source').forEach(n=>n.remove());
+    t.content.querySelectorAll('*').forEach(n=>{
+      [...n.attributes].forEach(at=>{
+        const nm=at.name.toLowerCase();
+        if(nm.startsWith('on') || nm==='href' || nm==='src' || nm==='srcdoc' || nm==='contenteditable') n.removeAttribute(at.name);
+      });
+    });
+    return t.innerHTML;
+  }
+  async function importWork(file){
+    let obj;
+    try{ obj=JSON.parse(await file.text()); }catch(_){ toast('작업 파일이 아니에요 (💾 파일 저장으로 받은 파일만 열 수 있어요)',4000); return; }
+    if(!obj || obj.app!==FILE_APP || !obj.ct){ toast('작업 파일이 아니에요 (💾 파일 저장으로 받은 파일만 열 수 있어요)',4000); return; }
+    for(;;){
+      const pw=await askPw('import',file.name); if(!pw) return;
+      let data;
+      try{
+        const k=await deriveKey(pw,unb64(obj.salt));
+        const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(obj.iv)},k,unb64(obj.ct));
+        data=JSON.parse(dec.decode(pt));
+      }catch(_){ toast('비밀번호가 틀렸어요. 다시 입력해 주세요',3000); continue; }
+      snap();
+      const meta={}; FIELDS.forEach(f=>{ if(data.meta && data.meta[f]!=null) meta[f]=String(data.meta[f]); });
+      apply({meta,html:cleanHtml(data.html)});
+      if(!ed.firstChild) ed.innerHTML='<div><br></div>';
+      await saveNow(); refresh();
+      const when=data.savedAt?new Date(data.savedAt):null;
+      toast('불러왔어요'+(when&&!isNaN(when)?' ('+(when.getMonth()+1)+'/'+when.getDate()+' '+String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0')+'에 저장한 파일)':''),4000);
+      return;
+    }
+  }
+  $('btnExport').onclick=exportWork;
+  $('btnImport').onclick=()=>{ if(cKey){ $('fileIn').value=''; $('fileIn').click(); } };
+  $('fileIn').onchange=e=>{ const f=e.target.files[0]; if(f) importWork(f); };
 
   // ---------- 미리보기 ----------
   function dateText(v){ if(!v) return ''; const [y,mo,d]=v.split('-').map(Number); return y+'년 '+mo+'월 '+d+'일'; }
